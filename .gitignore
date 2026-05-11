@@ -1,0 +1,25 @@
+## Swift / SwiftPM
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj/
+!default.xcodeproj/
+# Package.resolved IS committed (app, not library — lock dep versions)
+xcuserdata/
+DerivedData/
+
+## Xcode user state
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+## macOS
+.DS_Store
+
+## Editor noise
+.vscode/
+.idea/
+*.swp
+
+## Build outputs
+build/
+out/
