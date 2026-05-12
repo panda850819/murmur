@@ -11,14 +11,17 @@ concurrency:
 
 jobs:
   build-test:
-    runs-on: macos-14
+    # macos-15 (Sequoia) runner has Xcode 16 + Swift 6 by default.
+    # WhisperKit v1.0.0 uses:
+    #   - @retroactive attribute (Swift 6.0+ syntax)
+    #   - MLState type (macOS 14+ Core ML API, but WhisperKit declares .macOS(.v13)
+    #     in its Package.swift — so SPM compiles WhisperKit at macOS 13 SDK level
+    #     unless host SDK is new enough; macos-15 host SDK is macOS 15+ which
+    #     covers MLState)
+    # macos-14 runner caps at Xcode 15.x / Swift 5.10 — insufficient.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-
-      # WhisperKit uses @retroactive (Swift 5.10+). macos-14 runner default is
-      # Xcode 15.0.1 (Swift 5.9) which fails compile. Pin to 15.4 (Swift 5.10).
-      - name: Select Xcode 15.4
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
 
       - name: Swift version
         run: swift --version
