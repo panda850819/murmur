@@ -34,7 +34,7 @@ tags: [sprint, shipped, scaffold, swift, swiftui, whisperkit]
 | 3 execute | done iter 1 | scaffold + WhisperKit dep + swift build 38.85s + tests 2/2 |
 | 4 review | done iter 2 | P1-a (LICENSE) patched, SD-a (ROADMAP) accepted |
 | 5 ship gate | SHIPPED | commit + GitHub create + push |
-| 6 terminal | SHIPPED | first CI run queued, watching |
+| 6 terminal | SHIPPED (after CI fix) | 3-strike CI fix loop, see § "Post-push: CI 3-strike" |
 
 ## Findings (review)
 
@@ -98,9 +98,32 @@ murmur/
 | Sub-product chosen | `WhisperKit` only (NOT `ArgmaxOSS` umbrella) |
 | CI runner | `macos-14` (matches old murmur-voice convention to dodge macos-latest churn) |
 
+## Post-push: CI 3-strike fix loop
+
+Local `swift build` was green throughout (Xcode 26.3 / Swift 6.2.4), but CI
+exposed the real WhisperKit minimum requirement vs its declared minimum.
+
+| Strike | Commit | Runner / Xcode | Outcome |
+|---|---|---|---|
+| 1 | `84444c3` | `macos-14`, default Xcode 15.0.1 (Swift 5.9) | FAIL — `unknown attribute 'retroactive'` |
+| 2 | `f7d8fdd` | `macos-14`, pinned `Xcode_15.4.app` (Swift 5.10) | FAIL — still `@retroactive` + `cannot find type MLState` |
+| 3 | `55f87db` | `macos-15`, default Xcode 16+ (Swift 6+) | **GREEN in 1m20s** |
+
+Misdiagnosis at Strike 2: assumed `@retroactive` was a Swift 5.10 feature.
+It is actually Swift 6.0 syntax. WhisperKit's `Package.swift` declares
+`.macOS(.v13)` and `swift-tools-version: 5.10` — both lower than its real
+minimum (macOS 14 / Swift 6). The code uses macOS 14's `MLState` Core ML
+API and Swift 6's `@retroactive` attribute.
+
+Recorded as a brain pitfall at
+`learnings/pitfalls/whisperkit-package-platform-vs-code-mismatch.md`.
+
+The CI YAML now carries a comment explaining the macos-15 requirement so
+future-Panda doesn't strip it during a "tidy CI" refactor.
+
 ## OPEN_QUESTIONS carried forward
 
-1. **CI first-run verification**: workflow queued at commit time; if it fails, Sprint 2.1 follow-up.
+1. ~~CI first-run verification~~ — **RESOLVED** at commit `55f87db`, see § "Post-push: CI 3-strike".
 2. **Xcode project (.xcodeproj)** — Sprint 2 used pure SPM. For TestFlight / code signing / entitlements in Sprint 3+ we'll need an Xcode project (XcodeGen or manual).
 3. **iOS target** — not added in Sprint 2 per BRIEF v0.1 scope. Sprint 3+/v0.2 work.
 4. **WhisperKit model size default** (tiny/base/small) — needed before first actual transcription sprint.
