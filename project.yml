@@ -1,0 +1,83 @@
+# XcodeGen project spec for Murmur macOS app.
+#
+# This file is the single source of truth for the Xcode project structure.
+# Generated `Murmur.xcodeproj` is gitignored — regenerate with:
+#
+#   xcodegen generate
+#
+# Why XcodeGen (decided in Sprint 3 dojo, 2026-05-12):
+# - declarative project.yml -> git diff stays clean (no xcodeproj noise)
+# - Package.swift stays the source of truth for MurmurCore (cross-platform lib)
+# - Xcode project owns the macOS .app bundle wrapping (Info.plist, signing, entitlements)
+#
+# Sprint 3 scope: produce a buildable Murmur.app with mic permission dialog
+# that shows "Murmur" (not "Terminal"). Audio capture + WhisperKit transcribe
+# arrive in Sprint 4.
+
+name: Murmur
+options:
+  bundleIdPrefix: com.panda
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+  groupSortPosition: top
+
+# Reference the root Swift Package — MurmurCore stays in Package.swift.
+packages:
+  MurmurCore:
+    path: .
+
+targets:
+  MurmurMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MurmurMac
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - package: MurmurCore
+        product: MurmurCore
+    info:
+      path: Sources/MurmurMac/Info.plist
+      properties:
+        CFBundleDisplayName: Murmur
+        CFBundleShortVersionString: "0.0.1"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: false
+        # Mic permission — Sprint 3 introduces this so the dialog says "Murmur"
+        # instead of the terminal app name. Don't strip during refactor.
+        NSMicrophoneUsageDescription: >-
+          Murmur uses your microphone to record short audio clips and
+          transcribe them to text on-device.
+    entitlements:
+      path: Sources/MurmurMac/Murmur.entitlements
+      properties:
+        # App Sandbox — required for any future Mac App Store path AND for
+        # microphone TCC dialog to show our app name.
+        com.apple.security.app-sandbox: true
+        com.apple.security.device.audio-input: true
+        # Network access for Groq cloud fallback (Sprint 5+ feature, but
+        # turning it on here costs nothing and saves a later resign step).
+        com.apple.security.network.client: true
+        # User-selected file access — for "save recording to..." flows
+        # in Sprint 4+. Keep read-write, default deny in practice.
+        com.apple.security.files.user-selected.read-write: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.panda.murmur
+        # Empty DEVELOPMENT_TEAM -> Xcode falls back to "Sign to Run Locally"
+        # (a.k.a. ad-hoc signing). Works for dev builds, NOT for TestFlight.
+        # Fill in your Apple Developer team ID before any TestFlight upload.
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        # Personal Team / Apple ID is enough for Sprint 3 local builds.
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: true
+        # Strict concurrency disabled for now — WhisperKit 1.0.0 + Swift 6 mix
+        # already gives @retroactive warnings; don't add more noise.
+        SWIFT_STRICT_CONCURRENCY: minimal
