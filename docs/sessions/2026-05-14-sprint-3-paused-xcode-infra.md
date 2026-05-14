@@ -188,3 +188,28 @@ of an infra layer that hasn't been proven.
 - Office-hours brief: `docs/briefs/2026-05-12-sprint-3-scope.md` (commit `be78a89`)
 - PAUSED1 (initial 3-strike): same file, previous content (now superseded)
 - Path A attempt + PAUSED2 stuck point: this update
+
+---
+
+## Resolution — added 2026-05-14 by `/sprint murmur-xcode-bootstrap`
+
+The PAUSED2 "still failing" claim **did not reproduce**. Same commit
+(`42511d6`), same project.yml, same patch script, same `Core/` layout —
+clean-state run produced `** BUILD SUCCEEDED **` with `MurmurCore`
+compiling `import WhisperKit`.
+
+Root cause of the PAUSED2 mis-diagnosis: the failing reproduction used
+`xcodebuild -arch arm64 -destination 'platform=macOS,arch=arm64' ARCHS=arm64`
+which raises `destination implies architecture, architecture must not also
+be specified` — a harness error that masked the build's actual status.
+Dropping `-arch arm64` (keeping `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES`) makes
+the build run end-to-end successfully.
+
+Path A is the canonical layout going forward. Codified by
+[`scripts/bootstrap.sh`](../../scripts/bootstrap.sh) + the new CI
+`xcodebuild` job in `.github/workflows/ci.yml`. The XcodeGen 2.45.4 bug +
+patch pattern is documented in
+[`docs/learnings/pitfalls/2026-05-14-xcodegen-local-package-product-dependency-missing-link.md`](../learnings/pitfalls/2026-05-14-xcodegen-local-package-product-dependency-missing-link.md).
+
+Resume protocol for the original Sprint 3 audio scope:
+`/sprint murmur-sprint-3-audio` (fresh sprint, infra now green).

@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-test:
+  spm:
     # macos-15 (Sequoia) runner has Xcode 16 + Swift 6 by default.
     # WhisperKit v1.0.0 uses:
     #   - @retroactive attribute (Swift 6.0+ syntax)
@@ -27,9 +27,7 @@ jobs:
         run: swift --version
 
       # Core/ holds the SwiftPM library since Sprint 3 (2026-05-14) restructure.
-      # See Inbox/sprint-murmur-sprint-3-xcode-audio-2026-05-14.md for why.
-      # The macOS app target lives in the (gitignored) Xcode project and is
-      # not built by CI yet — that arrives in the murmur-xcode-bootstrap sprint.
+      # The macOS .app builds via the xcodebuild job below.
       - name: Resolve dependencies
         run: cd Core && swift package resolve
 
@@ -38,3 +36,28 @@ jobs:
 
       - name: Test
         run: cd Core && swift test -v
+
+  xcodebuild:
+    # Builds the macOS .app via Xcode. scripts/bootstrap.sh regenerates
+    # Murmur.xcodeproj (gitignored) from project.yml and patches the
+    # XcodeGen 2.45.4 local-package linkage bug. See
+    # docs/learnings/pitfalls/2026-05-14-xcodegen-local-package-product-dependency-missing-link.md
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Bootstrap Xcode project
+        run: ./scripts/bootstrap.sh
+
+      - name: Build MurmurMac.app
+        run: |
+          xcodebuild \
+            -project Murmur.xcodeproj \
+            -scheme MurmurMac \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            ONLY_ACTIVE_ARCH=YES \
+            build
