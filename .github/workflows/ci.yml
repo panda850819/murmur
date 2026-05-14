@@ -26,11 +26,15 @@ jobs:
       - name: Swift version
         run: swift --version
 
+      # Core/ holds the SwiftPM library since Sprint 3 (2026-05-14) restructure.
+      # See Inbox/sprint-murmur-sprint-3-xcode-audio-2026-05-14.md for why.
+      # The macOS app target lives in the (gitignored) Xcode project and is
+      # not built by CI yet — that arrives in the murmur-xcode-bootstrap sprint.
       - name: Resolve dependencies
-        run: swift package resolve
+        run: cd Core && swift package resolve
 
       - name: Build
-        run: swift build -v
+        run: cd Core && swift build -v
 
       - name: Test
-        run: swift test -v
+        run: cd Core && swift test -v

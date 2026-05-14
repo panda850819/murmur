@@ -35,25 +35,42 @@ full scope cap, kill criteria, and pivot rationale.
 murmur/
 ├── BRIEF.md                       scope cap, kill criteria, stack lock
 ├── ROADMAP.md                     long-term wishlist (BRIEF wins on conflict)
-├── Package.swift                  SwiftPM root
-├── Sources/
-│   ├── MurmurCore/                shared library (logic, WhisperKit dep)
-│   └── MurmurMac/                 SwiftUI macOS executable (v0.1 target)
-├── Tests/
-│   └── MurmurCoreTests/
-└── .github/workflows/
-    └── ci.yml                     swift build + swift test on macos-14
+├── project.yml                    XcodeGen spec — generates Murmur.xcodeproj
+├── scripts/
+│   └── patch-xcodeproj.py         XcodeGen 2.45.4 local-pkg linkage workaround
+├── Sources/MurmurMac/             Xcode macOS app target (.app, Info.plist, entitlements)
+├── Core/
+│   ├── Package.swift              SwiftPM library (MurmurCore + WhisperKit dep)
+│   ├── Sources/MurmurCore/        shared logic (also future iOS target dep)
+│   └── Tests/MurmurCoreTests/     library tests
+├── docs/
+│   ├── briefs/                    office-hours outputs
+│   └── sessions/                  sprint artifacts
+├── Inbox/                         PAUSED sprint checkpoints
+└── .github/workflows/ci.yml       swift build + swift test on macos-15
 ```
 
 ## Build
 
+The core library + tests build via SwiftPM:
+
 ```bash
-swift build              # build everything
-swift test               # run MurmurCoreTests
-swift run MurmurMac      # launch the SwiftUI scaffold window
+cd Core
+swift build         # build MurmurCore library
+swift test          # run MurmurCoreTests
 ```
 
-Requires Xcode 15.4+ (Swift 5.10) on macOS 14+.
+The macOS app builds via Xcode (Sprint 3 infra in progress — see
+`Inbox/sprint-murmur-sprint-3-xcode-audio-2026-05-14.md`):
+
+```bash
+xcodegen generate                          # produce Murmur.xcodeproj
+python3 scripts/patch-xcodeproj.py         # XcodeGen bug workaround
+open Murmur.xcodeproj                      # build & run from Xcode
+```
+
+Requires Xcode 16+ (Swift 6+) on macOS 14+. WhisperKit v1.0.0 uses
+Swift 6 `@retroactive` attribute + macOS 14 `MLState` Core ML API.
 
 ## MVP v0.1 (scope-capped, see BRIEF)
 
