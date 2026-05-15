@@ -13,6 +13,7 @@ struct MurmurApp: App {
 
 struct ContentView: View {
     @StateObject private var recorder = AudioRecorder()
+    @StateObject private var transcriber = Transcriber.makeDefault()
 
     var body: some View {
         VStack(spacing: 16) {
@@ -29,7 +30,25 @@ struct ContentView: View {
             }
             .controlSize(.large)
             .keyboardShortcut(.return, modifiers: [])
+            .disabled(transcriber.isTranscribing)
 
+            if transcriber.isTranscribing {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Transcribing…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let text = transcriber.transcript {
+                ScrollView {
+                    Text(text.isEmpty ? "(no speech detected)" : text)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 160)
+            }
             if let url = recorder.lastSavedURL {
                 Text("Saved: \(url.lastPathComponent)")
                     .font(.footnote)
@@ -38,7 +57,7 @@ struct ContentView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if let err = recorder.lastError {
+            if let err = recorder.lastError ?? transcriber.lastError {
                 Text(err)
                     .font(.footnote)
                     .foregroundStyle(.red)
@@ -52,7 +71,13 @@ struct ContentView: View {
     private func toggle() {
         Task {
             if recorder.isRecording {
+                let previousURL = recorder.lastSavedURL
                 await recorder.stop()
+                if let url = recorder.lastSavedURL,
+                   url != previousURL,
+                   recorder.lastError == nil {
+                    await transcriber.transcribe(wavURL: url)
+                }
             } else {
                 await recorder.start()
             }
