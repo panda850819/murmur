@@ -67,6 +67,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.panda.murmur
         DEVELOPMENT_TEAM: ""
+        # Adhoc here keeps CI (.github/workflows/ci.yml xcodebuild) working —
+        # it has no local cert. The dogfood copy is RE-SIGNED with a stable
+        # self-signed identity by scripts/dogfood-install.sh; macOS TCC keys
+        # Mic/Accessibility/Input-Monitoring on the designated requirement
+        # (stable cert), not the cdhash, so a one-time grant then survives
+        # every rebuild instead of adhoc's per-build churn.
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         SWIFT_VERSION: "5.10"
