@@ -31,14 +31,25 @@ public final class DictationCoordinator: ObservableObject {
 
     private let recorder: any Recording
     private let transcriber: Transcriber
+    private let paster: any Pasting
 
-    public init(recorder: any Recording, transcriber: Transcriber) {
+    public init(recorder: any Recording, transcriber: Transcriber, paster: any Pasting) {
         self.recorder = recorder
         self.transcriber = transcriber
+        self.paster = paster
     }
 
     public static func makeDefault() -> DictationCoordinator {
-        DictationCoordinator(recorder: AudioRecorder(), transcriber: .makeDefault())
+        #if os(macOS)
+        let paster: any Pasting = ClipboardPaster()
+        #else
+        let paster: any Pasting = NoopPaster()
+        #endif
+        return DictationCoordinator(
+            recorder: AudioRecorder(),
+            transcriber: .makeDefault(),
+            paster: paster
+        )
     }
 
     /// Idle → start recording. Recording → stop, then transcribe the WAV.
@@ -70,7 +81,24 @@ public final class DictationCoordinator: ObservableObject {
             await transcriber.transcribe(wavURL: url)
             transcript = transcriber.transcript
             errorMessage = transcriber.lastError
+            if errorMessage == nil, let text = transcript, !text.isEmpty {
+                if !paster.paste(text) {
+                    errorMessage = "Couldn't auto-paste. Enable Accessibility for "
+                        + "Murmur: System Settings ▸ Privacy & Security ▸ "
+                        + "Accessibility. (Transcript is on the clipboard — ⌘V "
+                        + "to paste manually.)"
+                }
+            }
             phase = .idle
         }
+    }
+
+    /// Hotkey-cancel: the trigger turned into a real modifier chord
+    /// (e.g. Right⌘+C) or was too brief to be intentional. Stop recording,
+    /// drop the clip, no transcribe, no paste. No-op unless recording.
+    public func cancel() async {
+        guard phase == .recording else { return }
+        _ = await recorder.stop()
+        phase = .idle
     }
 }
