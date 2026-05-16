@@ -22,11 +22,20 @@ public final class AudioRecorder: ObservableObject {
     @Published public private(set) var lastSavedURL: URL?
     @Published public private(set) var lastError: String?
 
-    private let audioProcessor: AudioProcessor
+    /// A FRESH `AudioProcessor` is built per recording session, not reused.
+    /// Reusing one instance across start/stop cycles makes the 2nd+ session
+    /// silently capture zero samples ("No audio captured.") — WhisperKit's
+    /// `stopRecording()` does `engine.reset()` + nils its engine, but a
+    /// reused processor still leaves the audio input in a state where the
+    /// next `setupEngine()`'s tap never receives buffers. A new instance per
+    /// session sidesteps it entirely (matches WhisperKit demo usage for
+    /// discrete recordings).
+    private let makeProcessor: () -> AudioProcessor
+    private var audioProcessor: AudioProcessor?
     private var hardCapTask: Task<Void, Never>?
 
-    public init(audioProcessor: AudioProcessor = AudioProcessor()) {
-        self.audioProcessor = audioProcessor
+    public init(makeProcessor: @escaping () -> AudioProcessor = { AudioProcessor() }) {
+        self.makeProcessor = makeProcessor
     }
 
     /// Request mic permission and start recording. Idempotent — calling while
@@ -40,13 +49,14 @@ public final class AudioRecorder: ObservableObject {
             return
         }
 
+        let processor = makeProcessor()
         do {
-            try audioProcessor.startRecordingLive(inputDeviceID: nil, callback: nil)
+            try processor.startRecordingLive(inputDeviceID: nil, callback: nil)
         } catch {
             lastError = "Start failed: \(error.localizedDescription)"
             return
         }
-
+        audioProcessor = processor
         isRecording = true
         hardCapTask = Task { [weak self] in
             do {
@@ -63,19 +73,21 @@ public final class AudioRecorder: ObservableObject {
     /// (inspect `lastError`). Idempotent.
     @discardableResult
     public func stop() async -> URL? {
-        guard isRecording else { return nil }
+        guard isRecording, let processor = audioProcessor else { return nil }
         hardCapTask?.cancel()
         hardCapTask = nil
 
         // stopRecording() synchronously removes the input tap (WhisperKit
         // AudioProcessor.swift:1090). AVAudioNode.removeTap is synchronous
         // w.r.t. in-flight tap blocks, so once it returns nothing can append
-        // to audioSamples — the read+clear below is race-free, no lock needed.
-        audioProcessor.stopRecording()
+        // to audioSamples — the read below is race-free, no lock needed.
+        processor.stopRecording()
         isRecording = false
 
-        let samples = Array(audioProcessor.audioSamples)
-        audioProcessor.audioSamples.removeAll(keepingCapacity: false)
+        let samples = Array(processor.audioSamples)
+        // Release this session's processor so the next start() builds a
+        // fresh one (see `makeProcessor` doc — reuse = silent no-capture).
+        audioProcessor = nil
 
         guard !samples.isEmpty else {
             lastError = "No audio captured."
