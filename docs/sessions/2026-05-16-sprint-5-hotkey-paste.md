@@ -95,15 +95,20 @@ Transport (the Sprint 5 deliverable) user-validated. Branch
 
 Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
 
-- **Bug #2 — "no audio on the 2nd+ recording" → STILL OPEN.** First fix
-  attempt (`c61fe57`, fresh `AudioProcessor` per session) **regressed the
-  1st recording to zero-capture** and was reverted; instance reuse is not
-  the cause. Reverted to the shared instance (known-good for the 1st
-  recording) + added temporary instrumentation (`os.Logger` +
-  `[diag #n, ms, samples]` on-screen) to get ground truth on the next
-  dogfood run instead of guessing again. Investigation note (hypothesis
-  disproven, status OPEN):
-  `docs/learnings/pitfalls/2026-05-16-whisperkit-audioprocessor-reuse-silent-no-capture.md`.
+- **Bug #2 — "no audio on the 2nd+ recording" → root cause confirmed,
+  fix applied, pending final verification.** Attempt 1 (fresh
+  `AudioProcessor` per session) regressed the 1st recording → reverted +
+  instrumented. Diagnostic `[diag #3, 2520ms, 0 samples]` + WhisperKit
+  source pinned the real mechanism: `startRecordingLive`/`stopRecording`
+  per session creates+`engine.reset()`s a new `AVAudioEngine` every time;
+  HAL state degrades after a few cycles → tap delivers zero buffers.
+  Fix: build the engine once, then `pauseRecording()`/`resumeRecordingLive()`
+  across sessions (never per-session `stopRecording()`); accumulate samples
+  via our own callback into an `OSAllocatedUnfairLock<[Float]>`. Pitfall
+  doc rewritten with the confirmed mechanism + disproven hypothesis kept.
+  3 fix-attempts on this bug → if this one still fails, escalate to a
+  hand-rolled `AVAudioEngine` (bypass WhisperKit `AudioProcessor`), not a
+  4th patch.
 - **Bug #1 — "Chinese comes out English" → routed to Sprint 6.** Sharpened
   root cause: `DecodingOptions(detectLanguage: true)` is unreliable on
   short dictation clips → misdetects `en`. This is a language-policy

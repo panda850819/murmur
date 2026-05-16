@@ -1,63 +1,77 @@
 ---
 date: 2026-05-16
 type: pitfall
-status: investigating
-topic: Repeated WhisperKit recording → 2nd+ session captures nothing (root cause UNCONFIRMED)
-tags: [pitfall, macos, whisperkit, avaudioengine, audio, murmur, open]
+status: fix-applied-pending-verification
+topic: Repeated WhisperKit recording → 2nd+ session captures nothing
+tags: [pitfall, macos, whisperkit, avaudioengine, audio, murmur]
 sprint: murmur-sprint-5-hotkey-paste
 ---
 
 # Repeated WhisperKit recording → "No audio captured." on the 2nd+ session
 
-> **Status: OPEN — root cause not yet confirmed.** This note records a
-> *disproven* hypothesis so the wrong fix isn't reattempted, plus the
-> instrumentation now in place to get ground truth. Do not treat the
-> "fix" below as real until the instrumented data confirms a cause.
-
 ## Symptom
 
-With one shared `AudioProcessor` (created at `AudioRecorder.init`): the
-1st dictation after launch records + transcribes fine; the **2nd and
-every subsequent** recording returns "No audio captured." (zero samples,
-no thrown error). Surfaced once hold-to-talk made back-to-back dictation
-the normal usage.
+With one shared `AudioProcessor` calling `startRecordingLive()` /
+`stopRecording()` per dictation: the first 1–2 recordings work; a later
+one (observed: session #3, full 2520 ms hold) returns "No audio
+captured." — **zero** samples, no thrown error, despite a long hold.
 
-## Hypothesis #1 — DISPROVEN
+## Root cause (data + source confirmed)
 
-"Reusing one `AudioProcessor` across sessions corrupts capture; build a
-fresh one per session." Implemented (factory-injected
-`AudioProcessor` per `start()`), shipped to dogfood. **Result: regression
-— even the 1st recording then captured zero samples.** So instance reuse
-is *not* the cause (a fresh per-session processor is strictly worse), and
-the shared instance is the known-good baseline for at least the 1st
-recording. Reverted.
+WhisperKit 1.0.0 `AudioProcessor`:
+- `startRecordingLive()` → `setupEngine()` builds a **brand-new
+  `AVAudioEngine`**, installs the tap, `prepare()` + `start()`.
+- `stopRecording()` → `engine.disconnectNodeInput` + `engine.stop()` +
+  **`engine.reset()`** + `audioEngine = nil`.
 
-Lesson already bankable: **WhisperKit `AudioProcessor` wants to be
-long-lived; constructing it immediately before `startRecordingLive()`
-breaks even the first capture.** Why is still unconfirmed — plausibly the
-fresh `AVAudioEngine().inputNode` format is not ready when queried
-synchronously right after `AudioProcessor()` construction, vs. an
-instance that has existed since launch.
+So every dictation creates and hard-resets a new `AVAudioEngine` on the
+same macOS audio HAL. After a few create→reset→recreate cycles the next
+engine's input tap silently delivers **zero** buffers — `processBuffer`
+never fires, `audioSamples` stays empty. Diagnostic `[diag #3, 2520ms, 0
+samples]` confirmed: not a short-hold/cancel issue, the engine genuinely
+captured nothing on the 3rd cycle.
 
-## Current state
+## Disproven hypothesis (kept so it isn't retried)
 
-Reverted to the shared instance + added temporary instrumentation
-(`os.Logger` subsystem `com.panda.murmur` category `audio`, plus an
-on-screen `[diag #session, ms, samples]` suffix on the no-capture error)
-so a single screenshot / Console line tells us, per session: count,
-hold duration, captured sample count, and whether `startRecordingLive`
-threw. Next dogfood run produces the data; the real fix follows from it,
-not from another guess.
+"Build a fresh `AudioProcessor` per session." **Regressed the 1st
+recording to zero-capture** — a brand-new processor's first
+`setupEngine()` queries `inputNode.inputFormat(forBus:0)` on a cold
+engine. Instance reuse is *not* the cause; engine create/reset churn is.
 
-## Why this is logged before it's solved
+## Fix
 
-A confidently-written "fix" that regressed is worse than an open
-question. The anti-pattern (pandastack `review` skill): "after 3-4 failed
-patches the next patch is statistical noise — stop, dump the full failure
-picture, diagnose with data." This file is that dump.
+Build the engine **once** and never reset it per session:
+- 1st `start()` → `startRecordingLive(callback:)` (creates the engine).
+- `stop()` → `pauseRecording()` (engine.pause(); tap stays installed;
+  engine NOT reset/niled).
+- subsequent `start()` → `resumeRecordingLive(callback:)` (just
+  `audioEngine?.start()` on the same paused engine).
+- `stopRecording()` only ever runs via `AudioProcessor.deinit` (app
+  teardown).
+
+Accumulate samples through our **own callback into an
+`OSAllocatedUnfairLock<[Float]>`** instead of reading WhisperKit's
+`audioSamples` — we no longer call `stopRecording()` per session, so its
+synchronous `removeTap` (the old basis for a lock-free read) is gone; the
+lock makes the tap-thread append / main-actor read race-free.
+
+## Why non-obvious
+
+`stopRecording()` reads as the natural "end a recording" call and looks
+like a clean teardown, so the start/stop-per-session shape is the obvious
+one. The damage is cumulative HAL state across engine resets, so it
+*works the first couple of times* — masking the bug in any quick test.
+WhisperKit's own `pause`/`resume` API is the intended path for repeated
+capture but isn't signposted as "use this instead of stop/start".
 
 ## Origin
 
-- Murmur Sprint 5 dogfood (2026-05-16). Reports: "第二次之後就變成 no
-  audio" → fresh-instance attempt → "第 1 次就 No audio" (regression) →
-  revert + instrument. Resolution pending instrumented data.
+- Murmur Sprint 5 dogfood (2026-05-16). "第二次之後就變成 no audio" →
+  fresh-instance attempt (regressed #1) → revert + on-screen `[diag …]`
+  instrumentation → `#3, 2520ms, 0 samples` pinned the engine-churn
+  mechanism → pause/resume + own-buffer fix. Final user verification
+  pending; mechanism is data + source confirmed.
+- General rule: when a repeated-resource operation works the first N times
+  then silently no-ops, suspect cumulative teardown/recreate state on a
+  shared OS resource (audio HAL, file handle, GPU context) before
+  suspecting your own per-call logic.
