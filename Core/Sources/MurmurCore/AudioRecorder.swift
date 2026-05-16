@@ -69,9 +69,14 @@ public final class AudioRecorder: ObservableObject {
 
         do {
             if didStartLive {
-                // Engine has been paused since the last stop(); it is safe to
-                // clear WhisperKit's internal buffer here (tap not firing).
-                audioProcessor.audioSamples.removeAll(keepingCapacity: false)
+                // Do NOT touch audioProcessor.audioSamples: the tap thread is
+                // its writer and it has no synchronisation, so any main-actor
+                // mutation here is a data race (codex P1-a). We read only our
+                // own lock-guarded captureBuffer, so WhisperKit's internal
+                // array is unused — it just grows for the app's lifetime
+                // (paused between sessions, so only during active recording).
+                // Accepted v0.1 tradeoff; the real resolution is the
+                // bypass-WhisperKit-AudioProcessor path (see OPEN_QUESTIONS).
                 try audioProcessor.resumeRecordingLive(inputDeviceID: nil, callback: sink)
             } else {
                 try audioProcessor.startRecordingLive(inputDeviceID: nil, callback: sink)

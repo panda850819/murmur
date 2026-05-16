@@ -109,6 +109,18 @@ Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
   3 fix-attempts on this bug → if this one still fails, escalate to a
   hand-rolled `AVAudioEngine` (bypass WhisperKit `AudioProcessor`), not a
   4th patch.
+- **Cross-model review gap closed + 2 codex findings fixed.** `/review`'s
+  Step 6.5 had silently never run (it shelled a `codex-companion.mjs` that
+  was never installed). Ran the `codex` CLI directly; it caught two real
+  P1s, both fixed: (P1-b) `GlobalHotKeyMonitor` used aggregate
+  `.maskCommand` to detect right-⌘ release → with left-⌘ also held,
+  `active` never cleared and recording stuck; now uses
+  `NX_DEVICERCMDKEYMASK` (0x10) side-specific flag. (P1-a) the
+  `audioProcessor.audioSamples.removeAll()` before resume was still a
+  main-vs-tap-thread race on WhisperKit's unsynchronised array; removed —
+  we read only our own lock-guarded buffer. The pandastack `/review`
+  skill itself was fixed to invoke `codex exec` directly with an honest
+  availability probe.
 - **Bug #1 — "Chinese comes out English" → routed to Sprint 6.** Sharpened
   root cause: `DecodingOptions(detectLanguage: true)` is unreliable on
   short dictation clips → misdetects `en`. This is a language-policy
@@ -131,6 +143,14 @@ Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
    restore). Accepted v0.1; documented in `Paster.swift`.
 4. **Right⌘ keycode 54** is layout/keyboard dependent. Fine for the user's
    Apple keyboard; revisit only if dogfood surfaces it.
+5. **WhisperKit `audioSamples` grows for the app session.** Since we never
+   call `stopRecording()`/`startRecordingLive()` per session (pause/resume
+   instead) and stopped clearing its array (codex P1-a race), WhisperKit's
+   internal buffer accumulates each session's audio (only during active
+   recording — paused between). ~64 KB/s of speech; fine for short-clip
+   dogfood with frequent app restarts. Real resolution = the
+   bypass-WhisperKit-`AudioProcessor` path (hand-rolled `AVAudioEngine`),
+   which also subsumes the Bug #2 escalation.
 
 ## PR #2 review follow-up (post-SHIP, same branch)
 

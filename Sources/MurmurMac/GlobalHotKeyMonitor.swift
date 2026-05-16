@@ -26,6 +26,12 @@ import MurmurCore
 @MainActor
 final class GlobalHotKeyMonitor: HotKeyMonitoring {
     private static let rightCommandKeyCode: Int64 = 54
+    /// `NX_DEVICERCMDKEYMASK` (IOLLEvent.h) — set iff the *right* Command key
+    /// is physically down. The aggregate `.maskCommand` is true if *either*
+    /// ⌘ is down, so it can't tell right-⌘ release from left-⌘ still-held
+    /// (→ `active` would never clear, recording stuck). This side-specific
+    /// device flag is the correct signal.
+    private static let rightCommandDeviceFlag: UInt64 = 0x10
     private static let minHold: TimeInterval = 0.18
 
     var onPress: (() -> Void)?
@@ -137,24 +143,25 @@ final class GlobalHotKeyMonitor: HotKeyMonitoring {
     // main actor for state mutation + callbacks.
     nonisolated private func handle(type: CGEventType, event: CGEvent) {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let commandDown = event.flags.contains(.maskCommand)
+        let rightCommandDown =
+            (event.flags.rawValue & Self.rightCommandDeviceFlag) != 0
         DispatchQueue.main.async { [weak self] in
-            self?.process(type: type, keyCode: keyCode, commandDown: commandDown)
+            self?.process(type: type, keyCode: keyCode, rightCommandDown: rightCommandDown)
         }
     }
 
-    private func process(type: CGEventType, keyCode: Int64, commandDown: Bool) {
+    private func process(type: CGEventType, keyCode: Int64, rightCommandDown: Bool) {
         switch type {
         case .keyDown where active:
             otherKeyDuringHold = true
 
         case .flagsChanged where keyCode == Self.rightCommandKeyCode:
-            if commandDown, !active {
+            if rightCommandDown, !active {
                 active = true
                 otherKeyDuringHold = false
                 pressedAt = ProcessInfo.processInfo.systemUptime
                 onPress?()
-            } else if !commandDown, active {
+            } else if !rightCommandDown, active {
                 active = false
                 let tooShort = ProcessInfo.processInfo.systemUptime
                     - pressedAt < Self.minHold
