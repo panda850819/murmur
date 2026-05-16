@@ -91,12 +91,31 @@ SUCCEEDED** ✓ · Functional: user smoke iter 3 PASS (cross-app hotkey → spea
 Transport (the Sprint 5 deliverable) user-validated. Branch
 `feat/hotkey-paste`. Only-known limitation is out-of-scope by design.
 
+## Post-ship dogfood (2026-05-16, same day)
+
+Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
+
+- **Bug #2 — "no audio on the 2nd+ recording" → FIXED on this branch**
+  (`c61fe57`). `AudioRecorder` reused one WhisperKit `AudioProcessor` for
+  its lifetime; reuse silently captures zero samples on session 2+. Fix:
+  fresh `AudioProcessor` per session via an injected factory. Pitfall:
+  `docs/learnings/pitfalls/2026-05-16-whisperkit-audioprocessor-reuse-silent-no-capture.md`.
+  Awaiting user re-verification (repeated dictation).
+- **Bug #1 — "Chinese comes out English" → routed to Sprint 6.** Sharpened
+  root cause: `DecodingOptions(detectLanguage: true)` is unreliable on
+  short dictation clips → misdetects `en`. This is a language-policy
+  product decision (zh-only / configurable / model upgrade), deliberately
+  NOT patched onto the S5 hotkey+paste PR. User reflected on it twice —
+  per BRIEF (dogfood pain drives the roadmap) it is the next sprint.
+
 ## OPEN_QUESTIONS
 
-1. **Transcription accuracy (base model).** "測試內容" → "So, it's the name
-   wrong."; trailing " Thank you." = classic Whisper short-clip silence
-   hallucination. Out of S5 scope. Strongest signal for the next sprint:
-   model-size bump / Groq fallback / LLM cleanup (all already on ROADMAP).
+1. **Sprint 6 = transcription language/quality.** `detectLanguage: true`
+   misdetects on short clips → Chinese transcribed as English; base model
+   accuracy weak; trailing " Thank you." = Whisper short-clip silence
+   hallucination. Scope candidates (user decides at intake): configurable
+   language (default zh), model-size bump, Groq fallback, LLM cleanup.
+   Decision this session: defer entirely, do it properly as its own sprint.
 2. **Ad-hoc cdhash churn.** Every `xcodebuild` invalidates the TCC grants.
    Dogfood from a stable copied `/Applications/Murmur.app`; the real fix is
    Developer ID signing — belongs to the signed-DMG release sprint.
