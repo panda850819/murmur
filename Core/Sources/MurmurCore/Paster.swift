@@ -27,7 +27,6 @@ public final class NoopPaster: Pasting {
 
 #if os(macOS)
 import AppKit
-import ApplicationServices
 
 /// macOS `Pasting`: writes the transcript to the general pasteboard and
 /// synthesises ⌘V into whatever app is frontmost. Gated on Accessibility
@@ -40,12 +39,14 @@ import ApplicationServices
 public final class ClipboardPaster: Pasting {
     public init() {}
 
-    /// `true` if the process is Accessibility-trusted. When not, passing
-    /// `prompt: true` surfaces the one-time System Settings dialog.
+    private let permissions: any PermissionProbe = RealPermissionProbe()
+
+    /// `true` if the process is Accessibility-trusted. Delegates to the
+    /// single `RealPermissionProbe` owner so the trust check isn't
+    /// reimplemented here and in `HotKeyBridge`.
     @discardableResult
     public func ensureAccessibilityPermission(prompt: Bool) -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        return AXIsProcessTrustedWithOptions([key: prompt] as CFDictionary)
+        permissions.accessibilityTrusted(prompt: prompt)
     }
 
     @discardableResult

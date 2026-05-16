@@ -1,7 +1,9 @@
 import AppKit
-import IOKit.hid
+import os
+import MurmurCore
 
-/// "Hold Right ⌘ to talk" global trigger.
+/// "Hold Right ⌘ to talk" global trigger — the macOS concrete behind
+/// `MurmurCore.HotKeyMonitoring`.
 ///
 /// Observes a session-level CGEvent tap for the Right Command physical key
 /// (keycode 54 — Carbon `RegisterEventHotKey` can't bind a bare modifier or
@@ -11,8 +13,8 @@ import IOKit.hid
 ///
 /// macOS-only and deliberately outside `MurmurCore`: a CGEvent tap is an
 /// input source (peer of the SwiftUI Button), not part of the unit-tested
-/// record → transcribe → paste flow that lives behind protocol seams in the
-/// shared library.
+/// flow. The serialisation + permission orchestration that *is* worth testing
+/// lives in `MurmurCore.HotKeyBridge` behind this protocol seam.
 ///
 /// Interaction model (v0.1, hold-to-talk):
 /// - Right⌘ down  → `onPress` (start recording)
@@ -22,7 +24,7 @@ import IOKit.hid
 ///       (accidental brush) → caller aborts without transcribing.
 ///     - `cancelled == false` → caller stops, transcribes, pastes.
 @MainActor
-final class GlobalHotKeyMonitor {
+final class GlobalHotKeyMonitor: HotKeyMonitoring {
     private static let rightCommandKeyCode: Int64 = 54
     private static let minHold: TimeInterval = 0.18
 
@@ -34,37 +36,24 @@ final class GlobalHotKeyMonitor {
     private var runLoopSource: CFRunLoopSource?
     /// The +1-retained `self` handed to the C callback via `refcon`. Released
     /// in `stop()` to balance `passRetained` (prevents the dangling-pointer
-    /// crash if the monitor outlives nothing / is torn down while the tap is
-    /// still draining its run-loop source).
+    /// crash if the monitor is torn down while the tap is still draining its
+    /// run-loop source).
     private var retainedSelf: UnsafeMutableRawPointer?
-    /// Read from the tap's delivery thread (in `reenable()`) to revive a tap
-    /// the system disabled. Written only on the main actor in start/stop.
-    private nonisolated(unsafe) var portForReenable: CFMachPort?
+    /// The tap port, read from the tap's delivery thread in `reenable()` and
+    /// written on the main actor in start/stop. Lock-guarded rather than
+    /// `nonisolated(unsafe)` so the cross-thread access is actually
+    /// synchronised, not just silenced.
+    private let portBox = OSAllocatedUnfairLock<CFMachPort?>(initialState: nil)
 
     private var active = false
     private var otherKeyDuringHold = false
     private var pressedAt: TimeInterval = 0
 
-    /// Whether the process may observe global keyboard input. This is
-    /// **Input Monitoring** (`kTCCServiceListenEvent`) — a *different* TCC
-    /// permission from Accessibility. Without it a listen-only keyboard tap
-    /// is silently restricted to the creating app's own events (the hotkey
-    /// then only fires while Murmur is frontmost). Passing `prompt: true`
-    /// surfaces the system dialog and adds Murmur to the Input Monitoring
-    /// list; the grant only takes effect after the app is relaunched.
-    static func inputMonitoringTrusted(prompt: Bool) -> Bool {
-        let granted = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
-            == kIOHIDAccessTypeGranted
-        if !granted, prompt {
-            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-        }
-        return granted
-    }
-
     /// Installs the tap. Returns `false` if it could not be created. Note a
     /// listen-only tap is created even WITHOUT Input Monitoring — it just
     /// won't see other apps' events — so a `true` here is necessary but not
-    /// sufficient; gate on `inputMonitoringTrusted()` for the real signal.
+    /// sufficient; `HotKeyBridge` gates on `PermissionProbe` for the real
+    /// signal.
     @discardableResult
     func start() -> Bool {
         guard tap == nil else { return true }
@@ -111,7 +100,7 @@ final class GlobalHotKeyMonitor {
         self.runLoop = runLoop
         self.runLoopSource = source
         self.retainedSelf = opaqueSelf
-        self.portForReenable = tap
+        portBox.withLock { $0 = tap }
         return true
     }
 
@@ -122,7 +111,7 @@ final class GlobalHotKeyMonitor {
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
-        portForReenable = nil
+        portBox.withLock { $0 = nil }
         tap = nil
         runLoop = nil
         runLoopSource = nil
@@ -132,11 +121,15 @@ final class GlobalHotKeyMonitor {
         }
     }
 
-    /// Runs on the tap's delivery thread. Safe: only touches the CF port,
-    /// which CoreGraphics permits re-enabling from the callback thread.
+    /// Runs on the tap's delivery thread. Re-enabling a tap from inside its
+    /// own callback is the established pattern (Hammerspoon et al.); Apple's
+    /// docs are silent on it rather than forbidding it. The lock makes the
+    /// port read race-free against a concurrent `stop()`.
     nonisolated private func reenable() {
-        if let portForReenable {
-            CGEvent.tapEnable(tap: portForReenable, enable: true)
+        portBox.withLock { port in
+            if let port {
+                CGEvent.tapEnable(tap: port, enable: true)
+            }
         }
     }
 

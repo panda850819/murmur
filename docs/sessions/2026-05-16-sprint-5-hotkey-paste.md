@@ -105,6 +105,33 @@ Transport (the Sprint 5 deliverable) user-validated. Branch
 4. **Right⌘ keycode 54** is layout/keyboard dependent. Fine for the user's
    Apple keyboard; revisit only if dogfood surfaces it.
 
+## PR #2 review follow-up (post-SHIP, same branch)
+
+`/review pr` ran a fresh 3-pass + cold review on the full committed diff —
+including the two smoke-driven fixes (AX-detection, Input Monitoring) that
+were added *after* the Stage 4 review and so had never been audited. No
+functional blocker; 4 quality items, all fixed in the follow-up commit:
+
+1. `HotKeyBridge` extracted to `MurmurCore` behind `HotKeyMonitoring` +
+   `PermissionProbe` seams (it had grown real logic — 2 permission states,
+   retry orchestration, task serialisation — untestable welded to the
+   CGEvent tap in `@main`). +6 unit tests now cover press/release ordering,
+   cancel, and the permission gating. **30/30 green.**
+2. AX-trust check de-duplicated into one owner (`RealPermissionProbe`);
+   `ClipboardPaster` delegates instead of reimplementing the dance.
+3. `portForReenable` `nonisolated(unsafe)` → `OSAllocatedUnfairLock` —
+   the cross-thread race is now synchronised, not silenced.
+4. Doc comment on `reenable()` (re-enabling a tap from its own callback is
+   the established pattern; Apple docs are silent, not prohibitive).
+
+Deferred → still OPEN_QUESTIONS: `NoopPaster` honest-seam (decide at the
+iOS sprint — `case unsupported` or a `precondition`); synthetic-⌘V zero
+delay (add ~50ms only if dogfood surfaces Electron-app flakiness);
+`inputMonitoringGranted` folding tap-create failure into the permission
+hint (rare edge). Agents' "unbounded task chain" re-flag answered in-code:
+bounded for the hold-to-talk shape (modifier flagsChanged doesn't
+key-repeat); rationale now a code comment so it isn't re-raised.
+
 ## Origin
 
 - Intake: `/sprint murmur-sprint-5-hotkey-paste` (next step after S4 SHIPPED)
