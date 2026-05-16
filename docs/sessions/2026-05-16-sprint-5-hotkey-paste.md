@@ -95,12 +95,15 @@ Transport (the Sprint 5 deliverable) user-validated. Branch
 
 Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
 
-- **Bug #2 — "no audio on the 2nd+ recording" → FIXED on this branch**
-  (`c61fe57`). `AudioRecorder` reused one WhisperKit `AudioProcessor` for
-  its lifetime; reuse silently captures zero samples on session 2+. Fix:
-  fresh `AudioProcessor` per session via an injected factory. Pitfall:
+- **Bug #2 — "no audio on the 2nd+ recording" → STILL OPEN.** First fix
+  attempt (`c61fe57`, fresh `AudioProcessor` per session) **regressed the
+  1st recording to zero-capture** and was reverted; instance reuse is not
+  the cause. Reverted to the shared instance (known-good for the 1st
+  recording) + added temporary instrumentation (`os.Logger` +
+  `[diag #n, ms, samples]` on-screen) to get ground truth on the next
+  dogfood run instead of guessing again. Investigation note (hypothesis
+  disproven, status OPEN):
   `docs/learnings/pitfalls/2026-05-16-whisperkit-audioprocessor-reuse-silent-no-capture.md`.
-  Awaiting user re-verification (repeated dictation).
 - **Bug #1 — "Chinese comes out English" → routed to Sprint 6.** Sharpened
   root cause: `DecodingOptions(detectLanguage: true)` is unreliable on
   short dictation clips → misdetects `en`. This is a language-policy
