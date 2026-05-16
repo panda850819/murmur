@@ -46,8 +46,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      # Pinned: scripts/patch-xcodeproj.py targets the XcodeGen 2.45.4
+      # local-package linkage bug specifically. An unpinned `brew install
+      # xcodegen` could pull a release where the patch is wrong or a no-op,
+      # silently shipping a broken/false-green build. Bump deliberately.
+      - name: Install xcodegen 2.45.4 (pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/xcodegen.zip \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.45.4/xcodegen.zip
+          unzip -q /tmp/xcodegen.zip -d /tmp/xcodegen-dist
+          XCG_BIN="$(find /tmp/xcodegen-dist -type f -name xcodegen -perm -u+x | head -1)"
+          test -n "$XCG_BIN" || { echo "::error::xcodegen binary not found in release zip"; exit 1; }
+          dirname "$XCG_BIN" >> "$GITHUB_PATH"
+
+      - name: Verify xcodegen is pinned to 2.45.4
+        run: xcodegen --version | grep -q '2\.45\.4' || { echo "::error::xcodegen not 2.45.4"; exit 1; }
 
       - name: Bootstrap Xcode project
         run: ./scripts/bootstrap.sh
