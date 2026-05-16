@@ -12,8 +12,7 @@ struct MurmurApp: App {
 }
 
 struct ContentView: View {
-    @StateObject private var recorder = AudioRecorder()
-    @StateObject private var transcriber = Transcriber.makeDefault()
+    @StateObject private var dictation = DictationCoordinator.makeDefault()
 
     var body: some View {
         VStack(spacing: 16) {
@@ -24,15 +23,17 @@ struct ContentView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            Button(action: toggle) {
-                Text(recorder.isRecording ? "Stop" : "Record")
+            Button {
+                Task { await dictation.toggle() }
+            } label: {
+                Text(dictation.phase == .recording ? "Stop" : "Record")
                     .frame(minWidth: 120)
             }
             .controlSize(.large)
             .keyboardShortcut(.return, modifiers: [])
-            .disabled(transcriber.isTranscribing)
+            .disabled(dictation.phase == .transcribing)
 
-            if transcriber.isTranscribing {
+            if dictation.phase == .transcribing {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Transcribing…")
@@ -40,7 +41,7 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if let text = transcriber.transcript {
+            if let text = dictation.transcript {
                 ScrollView {
                     Text(text.isEmpty ? "(no speech detected)" : text)
                         .font(.body)
@@ -49,7 +50,7 @@ struct ContentView: View {
                 }
                 .frame(maxHeight: 160)
             }
-            if let url = recorder.lastSavedURL {
+            if let url = dictation.lastSavedURL {
                 Text("Saved: \(url.lastPathComponent)")
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
@@ -57,7 +58,7 @@ struct ContentView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if let err = recorder.lastError ?? transcriber.lastError {
+            if let err = dictation.errorMessage {
                 Text(err)
                     .font(.footnote)
                     .foregroundStyle(.red)
@@ -66,22 +67,6 @@ struct ContentView: View {
         }
         .padding(40)
         .frame(minWidth: 360, minHeight: 240)
-    }
-
-    private func toggle() {
-        Task {
-            if recorder.isRecording {
-                let previousURL = recorder.lastSavedURL
-                await recorder.stop()
-                if let url = recorder.lastSavedURL,
-                   url != previousURL,
-                   recorder.lastError == nil {
-                    await transcriber.transcribe(wavURL: url)
-                }
-            } else {
-                await recorder.start()
-            }
-        }
     }
 }
 

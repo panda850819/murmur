@@ -15,21 +15,31 @@ private struct FakeTranscriber: Transcribing {
     }
 }
 
-/// Suspends inside `transcribe` until `release()` so the in-flight guard can
-/// be observed.
+/// Suspends inside `transcribe` until `release()`. `waitUntilEntered()` lets
+/// the test deterministically observe the in-flight state without polling.
 private actor GateEngine: Transcribing {
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var releaseCont: CheckedContinuation<Void, Never>?
+    private var enteredCont: CheckedContinuation<Void, Never>?
+    private var entered = false
     private(set) var calls = 0
 
     func transcribe(wavURL: URL) async throws -> String {
         calls += 1
-        await withCheckedContinuation { self.continuation = $0 }
+        entered = true
+        enteredCont?.resume()
+        enteredCont = nil
+        await withCheckedContinuation { releaseCont = $0 }
         return "gated"
     }
 
+    func waitUntilEntered() async {
+        if entered { return }
+        await withCheckedContinuation { enteredCont = $0 }
+    }
+
     func release() {
-        continuation?.resume()
-        continuation = nil
+        releaseCont?.resume()
+        releaseCont = nil
     }
 
     func callCount() -> Int { calls }
@@ -74,7 +84,7 @@ final class TranscriberTests: XCTestCase {
         let t = Transcriber(engine: gate)
 
         let first = Task { await t.transcribe(wavURL: wav) }
-        while await gate.callCount() == 0 { await Task.yield() }
+        await gate.waitUntilEntered()
 
         XCTAssertTrue(t.isTranscribing)
         await t.transcribe(wavURL: wav)  // in-flight → guard returns immediately

@@ -101,12 +101,19 @@ public extension Transcriber {
         )
         .appendingPathComponent("Murmur", isDirectory: true)
         .appendingPathComponent("Models", isDirectory: true)
+        var resolvedBase = modelsDir
         if let modelsDir {
-            try? FileManager.default.createDirectory(
-                at: modelsDir,
-                withIntermediateDirectories: true
-            )
+            do {
+                try FileManager.default.createDirectory(
+                    at: modelsDir,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                // Can't create our dir — hand WhisperKit nil so it uses its
+                // own default cache instead of a path that doesn't exist.
+                resolvedBase = nil
+            }
         }
-        return Transcriber(engine: WhisperKitTranscriber(downloadBase: modelsDir))
+        return Transcriber(engine: WhisperKitTranscriber(downloadBase: resolvedBase))
     }
 }

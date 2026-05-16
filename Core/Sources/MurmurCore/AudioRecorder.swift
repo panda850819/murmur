@@ -49,19 +49,28 @@ public final class AudioRecorder: ObservableObject {
 
         isRecording = true
         hardCapTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.hardCapSeconds * 1_000_000_000))
-            guard !Task.isCancelled else { return }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(Self.hardCapSeconds * 1_000_000_000))
+            } catch {
+                return  // cancelled by a manual stop() — don't fire auto-stop
+            }
             await self?.stop()
         }
     }
 
-    /// Stop recording, write the accumulated samples to WAV, expose the URL.
-    /// Idempotent.
-    public func stop() async {
-        guard isRecording else { return }
+    /// Stop recording and write the accumulated samples to WAV. Returns the URL
+    /// written by this call, or nil if nothing was captured or the write failed
+    /// (inspect `lastError`). Idempotent.
+    @discardableResult
+    public func stop() async -> URL? {
+        guard isRecording else { return nil }
         hardCapTask?.cancel()
         hardCapTask = nil
 
+        // stopRecording() synchronously removes the input tap (WhisperKit
+        // AudioProcessor.swift:1090). AVAudioNode.removeTap is synchronous
+        // w.r.t. in-flight tap blocks, so once it returns nothing can append
+        // to audioSamples — the read+clear below is race-free, no lock needed.
         audioProcessor.stopRecording()
         isRecording = false
 
@@ -70,13 +79,16 @@ public final class AudioRecorder: ObservableObject {
 
         guard !samples.isEmpty else {
             lastError = "No audio captured."
-            return
+            return nil
         }
 
         do {
-            lastSavedURL = try WAVWriter.write(samples: samples)
+            let url = try WAVWriter.write(samples: samples)
+            lastSavedURL = url
+            return url
         } catch {
             lastError = "Save failed: \(error.localizedDescription)"
+            return nil
         }
     }
 }
