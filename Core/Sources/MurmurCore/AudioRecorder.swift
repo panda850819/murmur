@@ -83,8 +83,22 @@ public final class AudioRecorder: ObservableObject {
                 didStartLive = true
             }
         } catch {
-            Self.log.error("session #\(n) start threw: \(error.localizedDescription)")
-            lastError = "Start failed: \(error.localizedDescription)"
+            // TEMP diagnostics: session #, resume-vs-first, real mic TCC
+            // status. Disambiguates H1 (mic auth broken by adhoc cdhash
+            // churn → fails on #1/first) vs H2 (pause/resume resume fails
+            // → #2+/resume with mic=authorized).
+            let path = didStartLive ? "resume" : "first"
+            let mic: String
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized: mic = "authorized"
+            case .denied: mic = "denied"
+            case .notDetermined: mic = "notDetermined"
+            case .restricted: mic = "restricted"
+            @unknown default: mic = "unknown"
+            }
+            Self.log.error("session #\(n) \(path) threw (mic=\(mic)): \(error.localizedDescription)")
+            lastError = "Start failed [#\(n), \(path), mic=\(mic)]: "
+                + "\(error.localizedDescription)"
             return
         }
 
