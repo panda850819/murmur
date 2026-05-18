@@ -1,6 +1,5 @@
 import AVFoundation
 import Foundation
-import os
 
 /// Records a mic clip straight to a 16 kHz mono Float32 WAV file using
 /// **`AVAudioRecorder`** — the OS API purpose-built for "record a clip,
@@ -17,7 +16,7 @@ public final class AudioRecorder: ObservableObject {
     @Published public private(set) var lastSavedURL: URL?
     @Published public private(set) var lastError: String?
 
-    /// 16 kHz mono Float32 PCM WAV — same format Sprint 4 validated with
+    /// 16 kHz mono Float32 PCM WAV — the format Sprint 4 validated with
     /// WhisperKit, so the transcriber input is unchanged.
     private static let settings: [String: Any] = [
         AVFormatIDKey: Int(kAudioFormatLinearPCM),
@@ -33,9 +32,6 @@ public final class AudioRecorder: ObservableObject {
     private var currentURL: URL?
     private var hardCapTask: Task<Void, Never>?
 
-    private static let log = Logger(subsystem: "com.panda.murmur", category: "audio")
-    private var sessionCount = 0
-
     public init() {}
 
     public func start() async {
@@ -47,37 +43,28 @@ public final class AudioRecorder: ObservableObject {
             return
         }
 
-        sessionCount += 1
-        let n = sessionCount
-
         do {
             let url = try WAVWriter.makeTimestampedURL()
             // A fresh AVAudioRecorder per clip is the intended usage — it,
             // not us, owns the session/HAL lifecycle.
             let rec = try AVAudioRecorder(url: url, settings: Self.settings)
             guard rec.prepareToRecord(), rec.record() else {
-                let mic = Self.micStatusString()
-                Self.log.error("session #\(n) record() refused (mic=\(mic))")
-                lastError = "Start failed [#\(n), record, mic=\(mic)]: "
-                    + "AVAudioRecorder refused to start."
+                lastError = "Couldn't start recording."
                 return
             }
             recorder = rec
             currentURL = url
         } catch {
-            let mic = Self.micStatusString()
-            Self.log.error("session #\(n) start threw (mic=\(mic)): \(error.localizedDescription)")
-            lastError = "Start failed [#\(n), init, mic=\(mic)]: \(error.localizedDescription)"
+            lastError = "Start failed: \(error.localizedDescription)"
             return
         }
 
         isRecording = true
-        Self.log.info("session #\(n) recording → \(self.currentURL?.lastPathComponent ?? "?")")
         hardCapTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: UInt64(Self.hardCapSeconds * 1_000_000_000))
             } catch {
-                return
+                return  // cancelled by a manual stop() — don't fire auto-stop
             }
             await self?.stop()
         }
@@ -94,14 +81,12 @@ public final class AudioRecorder: ObservableObject {
         recorder = nil
         currentURL = nil
 
-        let n = sessionCount
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let bytes = (attrs?[.size] as? Int) ?? 0
-        Self.log.info("session #\(n) stopped; file=\(bytes) bytes")
 
         // A bare WAV header (~44 bytes) with no samples ⇒ nothing captured.
         guard bytes > 1024 else {
-            lastError = "No audio captured. [diag #\(n), \(bytes) bytes]"
+            lastError = "No audio captured."
             try? FileManager.default.removeItem(at: url)
             return nil
         }
@@ -120,16 +105,6 @@ public final class AudioRecorder: ObservableObject {
             }
         default:
             return false
-        }
-    }
-
-    private static func micStatusString() -> String {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: return "authorized"
-        case .denied: return "denied"
-        case .notDetermined: return "notDetermined"
-        case .restricted: return "restricted"
-        @unknown default: return "unknown"
         }
     }
 }

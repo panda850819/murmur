@@ -120,9 +120,13 @@ Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
   WhisperKit already transcribes from a file URL (live samples were never
   needed). `AudioRecorder` rewritten on `AVAudioRecorder` (fresh recorder
   per clip = intended usage; ~110 lines, no engine/tap/converter/lock).
-  Deployed + deploy-proofed. Awaiting the first multi-dictation test of
-  the essential rewrite. (Earlier "first real data point" below was the
-  superseded own-engine attempt.)
+  Deployed + deploy-proofed. **User-validated ("ok 了") — consecutive
+  dictations work; Bug #2 RESOLVED.** TEMP diagnostics removed; clean
+  production `AudioRecorder` (~95 lines) deployed + deploy-proofed. The
+  full v0.1 macOS loop (global hotkey → record → transcribe → paste) is
+  now end-to-end working on a verified, Developer-ID-signed build.
+  (Earlier "first real data point" below was the superseded own-engine
+  attempt.)
 - **First real audio data point + escalation deployed.** On the verified
   build, pause/resume actually ran: `[#6, resume, mic=authorized] -10868`
   — i.e. it works for sessions #1–#5 then `resumeRecordingLive()` fails
