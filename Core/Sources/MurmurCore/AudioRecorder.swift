@@ -1,19 +1,13 @@
 import AVFoundation
 import Foundation
-import WhisperKit
 
-/// Records audio from the system default input through WhisperKit's
-/// `AudioProcessor`, writes a 16 kHz mono Float32 WAV on stop, and exposes
-/// `@Published` state for SwiftUI binding.
-///
-/// Sprint 3 goals:
-/// - goal-L0-a: ≥ 3 s usable recording (no enforced minimum here; the UI
-///   simply doesn't gate on duration)
-/// - goal-L0-b: WAV format = 16 kHz mono Float32 PCM (WAVWriter)
-/// - goal-L0-c: Saved under `Application Support/Murmur/Recordings/`
-/// - goal-L0-d: 30 s hard cap (auto-stop)
-/// - goal-L0-e: File opens in QuickTime (covered by AVAudioFile + format)
-/// - goal-L0-f: Mic dialog says "Murmur" (covered by .app bundle + Info.plist)
+/// Records a mic clip straight to a 16 kHz mono Float32 WAV file using
+/// **`AVAudioRecorder`** — the OS API purpose-built for "record a clip,
+/// stop, repeat". It manages the audio session / HAL internally and is
+/// robust to repeated start/stop, unlike a hand-driven `AVAudioEngine`
+/// tap (whose engine-lifecycle churn threw `-10868` after a few cycles no
+/// matter how it was driven — see the Sprint 5 audio pitfall). WhisperKit
+/// already transcribes from a file URL, so live samples were never needed.
 @MainActor
 public final class AudioRecorder: ObservableObject {
     public static let hardCapSeconds: TimeInterval = 30
@@ -22,26 +16,44 @@ public final class AudioRecorder: ObservableObject {
     @Published public private(set) var lastSavedURL: URL?
     @Published public private(set) var lastError: String?
 
-    private let audioProcessor: AudioProcessor
+    /// 16 kHz mono Float32 PCM WAV — the format Sprint 4 validated with
+    /// WhisperKit, so the transcriber input is unchanged.
+    private static let settings: [String: Any] = [
+        AVFormatIDKey: Int(kAudioFormatLinearPCM),
+        AVSampleRateKey: 16_000.0,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+    ]
+
+    private var recorder: AVAudioRecorder?
+    private var currentURL: URL?
     private var hardCapTask: Task<Void, Never>?
 
-    public init(audioProcessor: AudioProcessor = AudioProcessor()) {
-        self.audioProcessor = audioProcessor
-    }
+    public init() {}
 
-    /// Request mic permission and start recording. Idempotent — calling while
-    /// already recording is a no-op.
     public func start() async {
         guard !isRecording else { return }
         lastError = nil
 
-        guard await AudioProcessor.requestRecordPermission() else {
+        guard await Self.ensureMicPermission() else {
             lastError = "Microphone permission denied."
             return
         }
 
         do {
-            try audioProcessor.startRecordingLive(inputDeviceID: nil, callback: nil)
+            let url = try WAVWriter.makeTimestampedURL()
+            // A fresh AVAudioRecorder per clip is the intended usage — it,
+            // not us, owns the session/HAL lifecycle.
+            let rec = try AVAudioRecorder(url: url, settings: Self.settings)
+            guard rec.prepareToRecord(), rec.record() else {
+                lastError = "Couldn't start recording."
+                return
+            }
+            recorder = rec
+            currentURL = url
         } catch {
             lastError = "Start failed: \(error.localizedDescription)"
             return
@@ -58,37 +70,41 @@ public final class AudioRecorder: ObservableObject {
         }
     }
 
-    /// Stop recording and write the accumulated samples to WAV. Returns the URL
-    /// written by this call, or nil if nothing was captured or the write failed
-    /// (inspect `lastError`). Idempotent.
     @discardableResult
     public func stop() async -> URL? {
-        guard isRecording else { return nil }
+        guard isRecording, let rec = recorder, let url = currentURL else { return nil }
         hardCapTask?.cancel()
         hardCapTask = nil
 
-        // stopRecording() synchronously removes the input tap (WhisperKit
-        // AudioProcessor.swift:1090). AVAudioNode.removeTap is synchronous
-        // w.r.t. in-flight tap blocks, so once it returns nothing can append
-        // to audioSamples — the read+clear below is race-free, no lock needed.
-        audioProcessor.stopRecording()
+        rec.stop()                 // finalises the WAV file synchronously
         isRecording = false
+        recorder = nil
+        currentURL = nil
 
-        let samples = Array(audioProcessor.audioSamples)
-        audioProcessor.audioSamples.removeAll(keepingCapacity: false)
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let bytes = (attrs?[.size] as? Int) ?? 0
 
-        guard !samples.isEmpty else {
+        // A bare WAV header (~44 bytes) with no samples ⇒ nothing captured.
+        guard bytes > 1024 else {
             lastError = "No audio captured."
+            try? FileManager.default.removeItem(at: url)
             return nil
         }
 
-        do {
-            let url = try WAVWriter.write(samples: samples)
-            lastSavedURL = url
-            return url
-        } catch {
-            lastError = "Save failed: \(error.localizedDescription)"
-            return nil
+        lastSavedURL = url
+        return url
+    }
+
+    private static func ensureMicPermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { cont in
+                AVCaptureDevice.requestAccess(for: .audio) { cont.resume(returning: $0) }
+            }
+        default:
+            return false
         }
     }
 }

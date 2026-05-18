@@ -26,7 +26,11 @@ echo "==> patch-xcodeproj.py (XcodeGen 2.45.4 local-package linkage bug)"
 python3 scripts/patch-xcodeproj.py
 
 echo
-echo "Bootstrap complete. Build with:"
+echo "Bootstrap complete. For a dogfood build, just run:  ./scripts/dogfood.sh"
+echo "(it does the CLEAN build + Developer ID re-sign + install correctly)."
+echo "Manual form — note 'clean build' and the pinned -derivedDataPath are"
+echo "both REQUIRED; plain incremental 'build' silently no-ops on Core/"
+echo "edits and ships a stale binary:"
 echo "  xcodebuild -project Murmur.xcodeproj -scheme MurmurMac \\"
 echo "    -configuration Debug -destination 'platform=macOS,arch=arm64' \\"
-echo "    ONLY_ACTIVE_ARCH=YES build"
+echo "    -derivedDataPath .ddp ONLY_ACTIVE_ARCH=YES clean build"

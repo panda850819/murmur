@@ -1,5 +1,23 @@
 import SwiftUI
+import AppKit
 import MurmurCore
+
+/// App-side deep links into the two System Settings panes. Lives here (not in
+/// `MurmurCore`) because opening Settings is an `NSWorkspace` UI action.
+enum PermissionSettings {
+    static func openAccessibility() {
+        open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+    }
+
+    static func openInputMonitoring() {
+        open("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+    }
+
+    private static func open(_ string: String) {
+        guard let url = URL(string: string) else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
 
 @main
 struct MurmurApp: App {
@@ -13,6 +31,10 @@ struct MurmurApp: App {
 
 struct ContentView: View {
     @StateObject private var dictation = DictationCoordinator.makeDefault()
+    @StateObject private var hotkey = HotKeyBridge(
+        monitor: GlobalHotKeyMonitor(),
+        probe: RealPermissionProbe()
+    )
 
     var body: some View {
         VStack(spacing: 16) {
@@ -32,6 +54,41 @@ struct ContentView: View {
             .controlSize(.large)
             .keyboardShortcut(.return, modifiers: [])
             .disabled(dictation.phase == .transcribing)
+
+            Text("Hold Right ⌘ anywhere to dictate")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if !hotkey.allPermissionsGranted {
+                VStack(spacing: 6) {
+                    Text("Murmur needs two permissions. Enable both, then "
+                        + "quit and reopen the app:")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(hotkey.inputMonitoringGranted ? "✓" : "✗") "
+                        + "Input Monitoring — global hotkey")
+                        .font(.caption)
+                        .foregroundStyle(hotkey.inputMonitoringGranted
+                            ? Color.secondary : Color.orange)
+                    Text("\(hotkey.accessibilityGranted ? "✓" : "✗") "
+                        + "Accessibility — auto-paste")
+                        .font(.caption)
+                        .foregroundStyle(hotkey.accessibilityGranted
+                            ? Color.secondary : Color.orange)
+                    HStack(spacing: 8) {
+                        Button("Input Monitoring") {
+                            PermissionSettings.openInputMonitoring()
+                        }
+                        Button("Accessibility") {
+                            PermissionSettings.openAccessibility()
+                        }
+                        Button("Re-check") { hotkey.retry() }
+                    }
+                    .controlSize(.small)
+                }
+            }
 
             if dictation.phase == .transcribing {
                 HStack(spacing: 8) {
@@ -67,6 +124,7 @@ struct ContentView: View {
         }
         .padding(40)
         .frame(minWidth: 360, minHeight: 240)
+        .onAppear { hotkey.attach(to: dictation) }
     }
 }
 

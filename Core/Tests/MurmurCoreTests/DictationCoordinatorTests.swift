@@ -24,6 +24,16 @@ private final class FakeRecorder: Recording {
     }
 }
 
+@MainActor
+private final class FakePaster: Pasting {
+    private(set) var pasted: [String] = []
+    var succeeds = true
+    func paste(_ text: String) -> Bool {
+        pasted.append(text)
+        return succeeds
+    }
+}
+
 private enum FakeErr: Error { case boom }
 
 private struct FixedEngine: Transcribing {
@@ -73,9 +83,14 @@ final class DictationCoordinatorTests: XCTestCase {
     @MainActor
     private func makeCoordinator(
         recorder: FakeRecorder,
-        engine: any Transcribing
+        engine: any Transcribing,
+        paster: FakePaster? = nil
     ) -> DictationCoordinator {
-        DictationCoordinator(recorder: recorder, transcriber: Transcriber(engine: engine))
+        DictationCoordinator(
+            recorder: recorder,
+            transcriber: Transcriber(engine: engine),
+            paster: paster ?? FakePaster()
+        )
     }
 
     @MainActor
@@ -155,5 +170,110 @@ final class DictationCoordinatorTests: XCTestCase {
         await flow.value
         XCTAssertEqual(c.phase, .idle)
         XCTAssertEqual(c.transcript, "gated")
+    }
+
+    @MainActor
+    func testSuccessfulTranscriptIsPasted() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("hello world")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(paster.pasted, ["hello world"])
+        XCTAssertNil(c.errorMessage)
+    }
+
+    @MainActor
+    func testEmptyTranscriptIsNotPasted() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(paster.pasted.isEmpty, "empty transcript must not paste")
+        XCTAssertNil(c.errorMessage)
+    }
+
+    @MainActor
+    func testPasteRefusalSurfacesAccessibilityHint() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        paster.succeeds = false
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("hi")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(paster.pasted, ["hi"])
+        XCTAssertEqual(c.transcript, "hi")
+        XCTAssertNotNil(c.errorMessage)
+        XCTAssertTrue(
+            c.errorMessage?.contains("Accessibility") == true,
+            "refused paste must point the user at Accessibility"
+        )
+    }
+
+    @MainActor
+    func testCancelStopsRecordingWithoutTranscribeOrPaste() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("should not run")),
+            paster: paster
+        )
+        await c.toggle()                       // → recording
+        XCTAssertEqual(c.phase, .recording)
+        await c.cancel()                       // abort, no transcribe/paste
+        XCTAssertEqual(c.phase, .idle)
+        XCTAssertNil(c.transcript)
+        XCTAssertTrue(paster.pasted.isEmpty)
+    }
+
+    @MainActor
+    func testCancelWhileIdleIsNoOp() async {
+        let rec = FakeRecorder()
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("x")))
+        await c.cancel()
+        XCTAssertEqual(c.phase, .idle)
+    }
+
+    /// A hotkey-cancel that lands while a transcribe is in flight must not
+    /// corrupt it (mirrors `testToggleDuringTranscribingIsIgnored`).
+    @MainActor
+    func testCancelDuringTranscribingIsIgnored() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let gate = GateEngine()
+        let paster = FakePaster()
+        let c = makeCoordinator(recorder: rec, engine: gate, paster: paster)
+
+        await c.toggle()                       // → recording
+        let flow = Task { await c.toggle() }   // stop → transcribing (gated)
+        await gate.waitUntilEntered()
+
+        XCTAssertEqual(c.phase, .transcribing)
+        await c.cancel()                       // must be ignored
+        XCTAssertEqual(c.phase, .transcribing)
+
+        await gate.release()
+        await flow.value
+        XCTAssertEqual(c.phase, .idle)
+        XCTAssertEqual(c.transcript, "gated")
+        XCTAssertEqual(paster.pasted, ["gated"])
     }
 }
