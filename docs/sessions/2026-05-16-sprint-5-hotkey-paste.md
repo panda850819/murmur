@@ -110,6 +110,19 @@ Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
   time — audio status is **UNKNOWN, to be re-baselined** on the verified
   build. Pitfall:
   `docs/learnings/pitfalls/2026-05-18-xcodebuild-stale-deriveddata-shipped-ghost-binary.md`.
+- **ESSENTIAL fix: switched off AVAudioEngine entirely → `AVAudioRecorder`.**
+  After own-engine stop/start also failed `[#2, engineStart] -10868`, the
+  pattern across 4 engine-lifecycle variants made the real diagnosis
+  clear: **wrong API abstraction.** AVAudioEngine + manual tap is the
+  low-level real-time path; "record a clip, stop, repeat, transcribe a
+  file" is exactly what `AVAudioRecorder` is for — it owns the
+  session/HAL lifecycle and is robust to repeated start/stop, and
+  WhisperKit already transcribes from a file URL (live samples were never
+  needed). `AudioRecorder` rewritten on `AVAudioRecorder` (fresh recorder
+  per clip = intended usage; ~110 lines, no engine/tap/converter/lock).
+  Deployed + deploy-proofed. Awaiting the first multi-dictation test of
+  the essential rewrite. (Earlier "first real data point" below was the
+  superseded own-engine attempt.)
 - **First real audio data point + escalation deployed.** On the verified
   build, pause/resume actually ran: `[#6, resume, mic=authorized] -10868`
   — i.e. it works for sessions #1–#5 then `resumeRecordingLive()` fails
