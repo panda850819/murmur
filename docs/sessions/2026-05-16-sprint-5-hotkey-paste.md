@@ -110,6 +110,20 @@ Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
   time — audio status is **UNKNOWN, to be re-baselined** on the verified
   build. Pitfall:
   `docs/learnings/pitfalls/2026-05-18-xcodebuild-stale-deriveddata-shipped-ghost-binary.md`.
+- **First real audio data point + escalation deployed.** On the verified
+  build, pause/resume actually ran: `[#6, resume, mic=authorized] -10868`
+  — i.e. it works for sessions #1–#5 then `resumeRecordingLive()` fails
+  (mic auth ruled out; H2 confirmed). WhisperKit's `AudioProcessor`
+  engine lifecycle degrades under repeated use no matter how it's driven.
+  Per the pre-committed escalation (not a 4th patch): `AudioRecorder`
+  rewritten to own a **single persistent `AVAudioEngine`** (tap installed
+  once, never reset/re-created; a capture flag gates accumulation;
+  WhisperKit kept for transcription only). Pinned `clean build` is now
+  mandatory (incremental no-ops even with `-derivedDataPath`; the
+  stale-build guard caught a 2nd ghost). One-shot: `scripts/dogfood.sh`.
+  Verified deployed (deploy-proof: rewrite string literals present in the
+  Developer-ID-signed `/Applications` dylib). Awaiting first real
+  multi-dictation test of the own-engine recorder.
 - **Cross-model review gap closed + 2 codex findings fixed.** `/review`'s
   Step 6.5 had silently never run (it shelled a `codex-companion.mjs` that
   was never installed). Ran the `codex` CLI directly; it caught two real

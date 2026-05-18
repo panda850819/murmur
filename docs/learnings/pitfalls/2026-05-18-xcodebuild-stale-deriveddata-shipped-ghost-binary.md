@@ -44,10 +44,24 @@ lacks code I definitely committed" — was the tell. Confirming:
 `stat -f %Sm` on the DerivedData app showed a 4-day-old mtime;
 `strings` on `MurmurMac.debug.dylib` lacked the new string literals.
 
+## Second layer: incremental no-ops even WITH a pinned path
+
+Pinning `-derivedDataPath .ddp` was necessary but **not sufficient**: a
+plain incremental `xcodebuild … build` after editing a local SwiftPM
+package source (`Core/Sources/MurmurCore/*.swift`) still printed BUILD
+SUCCEEDED while NOT recompiling the package — the `.ddp` app stayed at
+the previous build. XcodeGen regenerating the project + Xcode's local
+package build cache makes incremental builds unreliable. The
+`find -newer` stale-build guard caught this second ghost attempt before
+it shipped. **`clean build` is mandatory** for this project's
+dogfood loop; `scripts/dogfood.sh` enforces the whole correct sequence.
+
 ## Fix
 
-- Build with an explicit, in-repo derived data path:
-  `xcodebuild … -derivedDataPath .ddp … build` (gitignored).
+- Build with an explicit, in-repo derived data path AND `clean`:
+  `xcodebuild … -derivedDataPath .ddp … clean build` (`.ddp` gitignored).
+- One-shot `scripts/dogfood.sh` (bootstrap → clean build → install) so
+  the sequence cannot be done wrong by hand.
 - `dogfood-install.sh` installs from `"$REPO/.ddp/Build/Products/Debug/
   MurmurMac.app"` — a deterministic path, never a global `find`.
 - **Stale-build guard**: the install script `find … -newer "$APP"` over
