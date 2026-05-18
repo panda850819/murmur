@@ -158,14 +158,16 @@ Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
    restore). Accepted v0.1; documented in `Paster.swift`.
 4. **Right⌘ keycode 54** is layout/keyboard dependent. Fine for the user's
    Apple keyboard; revisit only if dogfood surfaces it.
-5. **WhisperKit `audioSamples` grows for the app session.** Since we never
-   call `stopRecording()`/`startRecordingLive()` per session (pause/resume
-   instead) and stopped clearing its array (codex P1-a race), WhisperKit's
-   internal buffer accumulates each session's audio (only during active
-   recording — paused between). ~64 KB/s of speech; fine for short-clip
-   dogfood with frequent app restarts. Real resolution = the
-   bypass-WhisperKit-`AudioProcessor` path (hand-rolled `AVAudioEngine`),
-   which also subsumes the Bug #2 escalation.
+5. **Mic indicator stays on while Murmur is open.** The own
+   `AVAudioEngine` is started once and never stopped (every "re-activate
+   input" path throws `-10868` after a few cycles — the only robust
+   design is keep-running + flag-gate). So macOS shows the mic in-use
+   indicator the whole time the app is open, not just while dictating.
+   Accepted v0.1 tradeoff for a dictation tool (superwhisper et al. do
+   the same). Future refinement: tear the engine down only after a long
+   idle (minutes), accepting the first post-idle dictation may need a
+   re-init. (Supersedes the old WhisperKit-`audioSamples`-growth note —
+   WhisperKit's `AudioProcessor` is no longer used for capture at all.)
 
 ## PR #2 review follow-up (post-SHIP, same branch)
 

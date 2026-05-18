@@ -4,18 +4,19 @@ import os
 
 /// Records mic audio into a 16 kHz mono Float32 WAV.
 ///
-/// Owns a **single, persistent `AVAudioEngine`** with the input tap
-/// installed exactly once. It is never re-instantiated and never
-/// `.reset()` — `start()`/`stop()` only toggle a capture flag and
-/// `engine.start()` / `engine.stop()` on that one instance.
+/// Owns a **single `AVAudioEngine`**, started exactly once for the app's
+/// lifetime, input tap installed exactly once, never stopped / paused /
+/// reset / re-instantiated. `start()`/`stop()` only toggle a lock-guarded
+/// capture flag; the always-running tap accumulates only while it is set.
 ///
-/// Why not WhisperKit's `AudioProcessor`: it builds a fresh `AVAudioEngine`
-/// every `startRecordingLive()` and `engine.reset()`s it every
-/// `stopRecording()`. Real dogfood (verified build) showed that lifecycle
-/// degrades — stop/start churned the macOS audio HAL (failed ~2nd–3rd),
-/// and pause/resume merely delayed it (`-10868` on resume at session #6).
-/// A persistent engine with a once-installed tap removes that entire
-/// failure class. WhisperKit is still used — for transcription only.
+/// Why this shape: every "re-activate the input" path on macOS throws
+/// `-10868` (`kAudioUnitErr_FormatNotSupported`) after a few cycles —
+/// WhisperKit `startRecordingLive`/`stopRecording` (~#2–3), WhisperKit
+/// `pause`/`resume` (#6), and a persistent engine with `stop()`/`start()`
+/// (#2) all failed identically on verified builds. Never re-activating
+/// the input is the only design that structurally avoids it. Tradeoff:
+/// the mic indicator stays on while Murmur is open (accepted v0.1).
+/// WhisperKit is still used — for transcription only.
 @MainActor
 public final class AudioRecorder: ObservableObject {
     public static let hardCapSeconds: TimeInterval = 30
@@ -89,9 +90,15 @@ public final class AudioRecorder: ObservableObject {
         // Stop accumulating BEFORE reading so no tap block races the read.
         capturing.withLock { $0 = false }
         isRecording = false
-        // Persistent instance: stop the engine but never reset / re-create
-        // it, and leave the tap installed — that is the whole point.
-        engine.stop()
+        // Do NOT stop the engine. Empirically every "re-activate input"
+        // path on macOS throws -10868 (kAudioUnitErr_FormatNotSupported)
+        // after a few cycles: WhisperKit stop/start (~#2–3), WhisperKit
+        // pause/resume (#6), and own-engine stop/start (#2) all failed the
+        // same way. The only design that structurally cannot hit it is a
+        // single engine.start() for the app's lifetime, with the capture
+        // flag (already cleared above) gating accumulation. Cost: the mic
+        // indicator stays on while Murmur is open — accepted v0.1 tradeoff
+        // for a dictation tool (see session OPEN_QUESTIONS).
 
         let samples = captureBuffer.withLock { $0 }
         let n = sessionCount

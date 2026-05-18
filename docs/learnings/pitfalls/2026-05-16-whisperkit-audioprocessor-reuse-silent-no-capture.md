@@ -1,13 +1,29 @@
 ---
 date: 2026-05-16
 type: pitfall
-status: fix-applied-pending-verification
+status: resolved-design
 topic: Repeated WhisperKit recording → 2nd+ session captures nothing
 tags: [pitfall, macos, whisperkit, avaudioengine, audio, murmur]
 sprint: murmur-sprint-5-hotkey-paste
 ---
 
 # Repeated WhisperKit recording → "No audio captured." on the 2nd+ session
+
+> **RESOLUTION (supersedes the analysis below).** Several intermediate
+> conclusions here were drawn on a stale "ghost" binary (see the
+> `2026-05-18-xcodebuild-stale-deriveddata` pitfall) and are unreliable.
+> On *verified* builds the real, general pattern is: **re-activating
+> macOS audio input throws `-10868` (`kAudioUnitErr_FormatNotSupported`)
+> after a few cycles, regardless of how** — WhisperKit
+> `startRecordingLive`/`stopRecording` (~#2–3), WhisperKit `pause`/`resume`
+> (#6), and an own persistent `AVAudioEngine` with `stop()`/`start()`
+> (#2) all failed identically. The only design that structurally avoids it:
+> start ONE `AVAudioEngine` once for the app's lifetime, install the input
+> tap once, **never stop/pause/reset it**, and gate sample accumulation
+> with a flag. Cost: mic indicator stays on while the app is open
+> (accepted v0.1). General lesson: on macOS, treat "stop then re-start
+> audio input" as a known-bad operation — keep the input graph alive and
+> gate downstream, don't tear capture down per use.
 
 ## Symptom
 
