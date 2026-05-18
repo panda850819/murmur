@@ -95,20 +95,21 @@ Transport (the Sprint 5 deliverable) user-validated. Branch
 
 Two bugs surfaced once hold-to-talk made repeated real dictation the norm:
 
-- **Bug #2 — "no audio on the 2nd+ recording" → root cause confirmed,
-  fix applied, pending final verification.** Attempt 1 (fresh
-  `AudioProcessor` per session) regressed the 1st recording → reverted +
-  instrumented. Diagnostic `[diag #3, 2520ms, 0 samples]` + WhisperKit
-  source pinned the real mechanism: `startRecordingLive`/`stopRecording`
-  per session creates+`engine.reset()`s a new `AVAudioEngine` every time;
-  HAL state degrades after a few cycles → tap delivers zero buffers.
-  Fix: build the engine once, then `pauseRecording()`/`resumeRecordingLive()`
-  across sessions (never per-session `stopRecording()`); accumulate samples
-  via our own callback into an `OSAllocatedUnfairLock<[Float]>`. Pitfall
-  doc rewritten with the confirmed mechanism + disproven hypothesis kept.
-  3 fix-attempts on this bug → if this one still fails, escalate to a
-  hand-rolled `AVAudioEngine` (bypass WhisperKit `AudioProcessor`), not a
-  4th patch.
+- **Bug #2 + all audio findings → VOID (tested a ghost binary).** The
+  real bug was the build/deploy pipeline: `xcodebuild` without an explicit
+  `-derivedDataPath` left the default DerivedData app frozen 4 days stale
+  while reporting BUILD SUCCEEDED, and `dogfood-install.sh`'s
+  `find … | head -1` shipped that stale bundle every cycle. So
+  fresh-AudioProcessor-regression, the `[diag #3,2520ms,0]` "confirmed
+  mechanism", pause/resume, `-10868` — **all observed on a binary that
+  predated this session; every conclusion is invalid.** Caught when
+  in-code diagnostics were absent from the user's screenshot. Pipeline
+  fixed: pinned `-derivedDataPath .ddp`, deterministic install path,
+  stale-build guard, deploy-proof. The session's audio code (pause/resume
+  etc.) is NOW genuinely deployed + Developer-ID-signed for the first
+  time — audio status is **UNKNOWN, to be re-baselined** on the verified
+  build. Pitfall:
+  `docs/learnings/pitfalls/2026-05-18-xcodebuild-stale-deriveddata-shipped-ghost-binary.md`.
 - **Cross-model review gap closed + 2 codex findings fixed.** `/review`'s
   Step 6.5 had silently never run (it shelled a `codex-companion.mjs` that
   was never installed). Ran the `codex` CLI directly; it caught two real

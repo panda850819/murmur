@@ -36,20 +36,36 @@ if [ -z "${IDENTITY:-}" ]; then
   exit 1
 fi
 
-APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 \
-  -name MurmurMac.app -path '*Build/Products/Debug*' -type d 2>/dev/null \
-  | head -1)
-if [ -z "${APP:-}" ]; then
-  echo "ERROR: built MurmurMac.app not found. Build it first:" >&2
+# DETERMINISTIC path: the build MUST use `-derivedDataPath .ddp`. The old
+# `find ~/Library/.../DerivedData | head -1` grabbed a STALE app (Xcode's
+# default DerivedData was frozen days behind while xcodebuild reported
+# "BUILD SUCCEEDED") — every "fix → test" cycle then shipped an old binary.
+# Pin the artifact to the in-repo build dir so what ships is what was built.
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+APP="$REPO/.ddp/Build/Products/Debug/MurmurMac.app"
+if [ ! -d "$APP" ]; then
+  echo "ERROR: $APP not found. Build with the EXACT derivedDataPath:" >&2
   echo "  ./scripts/bootstrap.sh && xcodebuild -project Murmur.xcodeproj \\" >&2
   echo "    -scheme MurmurMac -configuration Debug \\" >&2
-  echo "    -destination 'platform=macOS,arch=arm64' ONLY_ACTIVE_ARCH=YES build" >&2
+  echo "    -destination 'platform=macOS,arch=arm64' -derivedDataPath .ddp \\" >&2
+  echo "    ONLY_ACTIVE_ARCH=YES build" >&2
   exit 1
 fi
 
 if ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"; then
   echo "ERROR: code-signing identity '$IDENTITY' not in keychain. Available:" >&2
   security find-identity -v -p codesigning >&2
+  exit 1
+fi
+
+# STALE-BUILD GUARD: refuse to install if any source is newer than the
+# built app. This is the guard whose absence caused days of testing a
+# binary frozen behind the source — fail loud instead of shipping ghosts.
+STALE=$(find "$REPO/Core/Sources" "$REPO/Sources" -name '*.swift' -newer "$APP" 2>/dev/null | head -3)
+if [ -n "$STALE" ]; then
+  echo "ERROR: source newer than the build — rebuild before installing:" >&2
+  echo "$STALE" | sed 's/^/  /' >&2
+  echo "  (re-run: xcodebuild … -derivedDataPath .ddp … build)" >&2
   exit 1
 fi
 
@@ -60,6 +76,7 @@ codesign --force --deep --sign "$IDENTITY" "$DEST"
 echo "==> signed:"
 codesign -dvvv "$DEST" 2>&1 | grep -E "Authority=|Identifier=|Signature=" | head -3
 echo "Installed + stably signed → $DEST"
+echo "   build mtime: $(stat -f '%Sm' "$APP")"
 echo
 echo "First run after this: grant Microphone + Accessibility + Input"
 echo "Monitoring ONCE. They will then persist across future rebuilds."

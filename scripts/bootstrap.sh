@@ -26,7 +26,9 @@ echo "==> patch-xcodeproj.py (XcodeGen 2.45.4 local-package linkage bug)"
 python3 scripts/patch-xcodeproj.py
 
 echo
-echo "Bootstrap complete. Build with:"
+echo "Bootstrap complete. Build with (the explicit -derivedDataPath is"
+echo "REQUIRED — Xcode's default DerivedData went stale and silently"
+echo "shipped a days-old binary; dogfood-install.sh installs from .ddp):"
 echo "  xcodebuild -project Murmur.xcodeproj -scheme MurmurMac \\"
 echo "    -configuration Debug -destination 'platform=macOS,arch=arm64' \\"
-echo "    ONLY_ACTIVE_ARCH=YES build"
+echo "    -derivedDataPath .ddp ONLY_ACTIVE_ARCH=YES build"
