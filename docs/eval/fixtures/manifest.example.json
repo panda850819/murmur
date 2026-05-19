@@ -1,0 +1,28 @@
+{
+  "clips": [
+    {
+      "id": "zh-short-01",
+      "file": "zh-short-01.wav",
+      "reference": "今天天氣很好",
+      "tokenization": "character",
+      "source": "iphone-voicememo",
+      "notes": "Bug #1 zone: short Chinese clip, must not come out English"
+    },
+    {
+      "id": "zh-long-01",
+      "file": "zh-long-01.wav",
+      "reference": "我下午三點要跟團隊開一個關於產品方向的會議",
+      "tokenization": "character",
+      "source": "macbook-mic",
+      "notes": null
+    },
+    {
+      "id": "en-01",
+      "file": "en-01.wav",
+      "reference": "schedule the release review for next Tuesday",
+      "tokenization": "word",
+      "source": "macbook-mic",
+      "notes": null
+    }
+  ]
+}

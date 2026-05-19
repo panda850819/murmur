@@ -26,6 +26,12 @@ let package = Package(
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ]
         ),
+        // Playback runner for BRIEF Quality gate #1 (WER regression).
+        // `swift run --package-path Core MurmurEval` / scripts/eval.sh.
+        .executableTarget(
+            name: "MurmurEval",
+            dependencies: ["MurmurCore"]
+        ),
         .testTarget(
             name: "MurmurCoreTests",
             dependencies: ["MurmurCore"]
