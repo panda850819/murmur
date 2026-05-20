@@ -99,6 +99,22 @@ ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep -A1 "AVFoundation au
    開 PR。Sprint 6 → SHIPPED。再 fire 同一個 `/goal`,它接著跑 Sprint 7
   (Bug #1) 和 Sprint 8,每段都被 `scripts/eval.sh` 把關。
 
+## 卡住的時候
+
+**`AVFoundation audio devices:` 後面是空的 / 一個 device 都沒列出來**
+= 你的 terminal app 沒有麥克風權限。list-devices 不會自動跳權限視窗
+(它只查不錄),要手動授權:
+
+1. System Settings ▸ Privacy & Security ▸ Microphone,找你的 terminal
+   app 打開開關。
+2. 不在清單裡的話,先強制觸發一次權限請求:
+   ```bash
+   ffmpeg -y -f avfoundation -i ":0" -ar 16000 -ac 1 -t 1 /tmp/perm-probe.wav
+   ```
+   會跳系統視窗,點允許。
+3. **完全關掉 terminal 視窗再開新的**(權限變動對已開的 shell 不即時
+   生效)。重跑 list-devices 應該看到 `[0] MacBook Pro Microphone`。
+
 ## 注意
 
 - fixtures 直接 commit 進 repo(12 段 × 5 秒 × 16 kHz mono ≈ 2 MB,小)。
