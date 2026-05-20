@@ -20,10 +20,12 @@ feature-complete. Sprint 6 splits into:
   on `feat/sprint6-wer-eval-harness`. Verified: clean `swift build`,
   7/7 deterministic WER tests, binary runs and fails honestly with no
   fixtures. Not pushed / no PR — PAUSED does not ship.
-- **6b (blocked, human-required)**: record 10–20 Apple-device-native
-  clips (iPhone + MacBook mic) + bootstrap baseline. An agent cannot
-  produce Panda's voice; BRIEF forbids TTS / reused clips. This is the
-  `/goal` halt point.
+- **6b (blocked, human-required)**: record 12 MacBook-mic clips +
+  bootstrap baseline. v0.1 = macOS-only, so the v0.1 fixture set is
+  MacBook-only; iPhone clips are deferred to v0.2 sprint (manifest
+  schema already supports them additively). An agent cannot produce
+  Panda's voice; BRIEF forbids TTS / reused clips. This is the `/goal`
+  halt point.
 
 ## Why the whole /goal halts here
 
@@ -44,14 +46,16 @@ fake-advance. So 7 and 8 are deliberately untouched.
 5. Re-fire the same `/goal`; it resumes Sprint 7 (Bug #1) then Sprint 8,
    each gated by `scripts/eval.sh`.
 
-## Ranked proposal for the fixture question
+## Fixture scope for v0.1 (corrected 2026-05-20)
 
-1. **(recommended)** 12 clips, iPhone + MacBook, per kit. ~20 min,
-   satisfies BRIEF gate as written.
-2. iPhone-only —降規, BRIEF wants both mics; needs explicit Panda OK.
-3. Skip fixtures, run 7/8 without an oracle — rejected: directly
-   violates DONE WHEN + STOP RULES, repeats the ghost-binary class of
-   error (changing transcription with no regression check).
+12 MacBook-mic clips: 6 short zh (Bug #1 zone) + 3 long zh + 3 en.
+iPhone clips deferred to v0.2 sprint, not v0.1 — v0.1 is macOS-only per
+BRIEF, pulling iPhone fixtures forward = second-system effect. Manifest
+schema supports adding iPhone entries later without harness change.
+Skipping fixtures entirely and running 7/8 without an oracle was
+rejected: directly violates DONE WHEN + STOP RULES, repeats the
+ghost-binary class of error (changing transcription with no regression
+check).
 
 ## Findings (6a self-review)
 
@@ -61,5 +65,6 @@ not a defect. Scope clean: Transcriber / DictationCoordinator untouched.
 
 ## OPEN_QUESTIONS
 
-- Fixture set size/spread is the recommendation, not Panda-confirmed —
-  resolve at 6b intake.
+- iPhone fixture set is deferred to v0.2 sprint, not addressed here.
+- Clip durations (`-t 5` for short, `-t 8` for long/en) are kit
+  defaults; Panda may adjust per actual speech length.
