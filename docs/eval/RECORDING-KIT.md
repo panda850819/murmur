@@ -1,15 +1,17 @@
-# Murmur Eval 錄音手冊 — v0.1(MacBook only,約 15 分鐘)
+# Murmur Eval 錄音手冊 — v0.1(AirPods Pro,約 15 分鐘)
 
-> v0.1 = macOS only,所以這版 fixture 全部用 MacBook 麥克風錄。
-> iPhone clips 等 v0.2 sprint 開了再加(manifest schema 已經支援,加
-> entries 就好,不用改 harness)。
+> v0.1 = macOS only。Fixture 用 Panda **日常 dictation 環境**錄,目前
+> 是 AirPods Pro(macOS HFP 模式,16 kHz mono)— baseline 要反映實況,
+> 不然 Bug #1 的 WER 改善被 noise profile 差異污染。其他 mic 來源
+> (MacBook 內建 / iPhone)等 v0.2 sprint 再 augment 同一份 manifest +
+> baseline(manifest schema 已支援 `source` 欄位,加 entries 就好)。
 
 ## 你要產出什麼
 
-12 段 MacBook 麥克風錄的 wav + 每段你實際講的逐字稿,放進
+12 段 AirPods Pro 錄的 wav + 每段你實際講的逐字稿,放進
 `docs/eval/fixtures/`,列在 `docs/eval/fixtures/manifest.json`。
 
-## 錄音清單(12 段,全 MacBook 麥克風)
+## 錄音清單(12 段,全 AirPods Pro)
 
 | id | 語言 | 講什麼 |
 |---|---|---|
@@ -27,22 +29,23 @@
 brew install ffmpeg   # 沒裝才裝
 ```
 
-列出 MacBook 的 audio input device 編號(只做一次,記下你麥克風的
-index,後面要填):
+列出 audio input device 編號(只做一次,記下 AirPods 那行前面的數字,
+後面要填):
 
 ```bash
 ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep -A1 "AVFoundation audio"
 ```
 
-輸出長這樣,記下 `MacBook 麥克風`(或 `MacBook Pro Microphone`)前面
-那個數字,假設是 `0`:
+戴著 AirPods 跑,輸出會像:
 
 ```
 [AVFoundation indev] AVFoundation audio devices:
-[AVFoundation indev]  [0] MacBook Pro Microphone
+[AVFoundation indev]  [0] AirPods Pro
 ```
 
-下面範例都用 `0`,你不是就換成你的數字。
+下面範例都用 `0`,你不是就換成你的數字。AirPods 沒列出來 = 沒連上;
+看到 MacBook 內建 mic 但沒看到 AirPods = AirPods 沒當成 audio input
+裝置(macOS menubar / Sound 設定確認一下輸入裝置選的是 AirPods)。
 
 ## 步驟
 
@@ -51,7 +54,7 @@ ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep -A1 "AVFoundation au
    cd /Users/panda/site/apps/murmur
    ```
 
-2. **錄一段**(指令在 terminal 跑,跑了之後馬上對著 MacBook 講,講完
+2. **錄一段**(指令在 terminal 跑,跑了之後馬上對著 AirPods 講,講完
    等它自己停):
    ```bash
    ffmpeg -y -f avfoundation -i ":0" -ar 16000 -ac 1 -t 5 \
@@ -61,6 +64,9 @@ ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep -A1 "AVFoundation au
    - `-i ":0"` 的 `0` 換成你剛才查到的 index。
    - 第一次跑 ffmpeg avfoundation 會跳麥克風權限視窗,授權給 Terminal
      (System Settings ▸ Privacy & Security ▸ Microphone)。
+   - AirPods 切到 HFP 模式後麥克風採樣率天花板就是 16 kHz、單聲道,
+     和 `-ar 16000 -ac 1` 對齊。錄起來音質聽起來會比平常 A2DP 差,
+     正常,baseline 就是要反映這個環境。
 
 3. **照清單錄完 12 段**,id 對到檔名一致:
    ```
@@ -81,7 +87,7 @@ ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep -A1 "AVFoundation au
    ```
    打開 `manifest.json`,12 段每段一筆。`reference` 填你實際講的逐字
    稿,一字不差。`tokenization`:中文填 `character`(算 CER),英文填
-   `word`。`source` 全部填 `macbook-mic`。
+   `word`。`source` 全部填 `airpods-pro`。
 
 6. **產 baseline**:
    ```bash
@@ -93,7 +99,7 @@ ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep -A1 "AVFoundation au
 7. **commit 上 branch**:
    ```bash
    git add docs/eval/fixtures/ docs/eval/baseline.json
-   git commit -m "feat(eval): MacBook-mic fixture set + WER baseline (Sprint 6b)"
+   git commit -m "feat(eval): AirPods Pro fixture set + WER baseline (Sprint 6b)"
    git push -u origin feat/sprint6-wer-eval-harness
    ```
    開 PR。Sprint 6 → SHIPPED。再 fire 同一個 `/goal`,它接著跑 Sprint 7

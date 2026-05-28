@@ -20,12 +20,15 @@ feature-complete. Sprint 6 splits into:
   on `feat/sprint6-wer-eval-harness`. Verified: clean `swift build`,
   7/7 deterministic WER tests, binary runs and fails honestly with no
   fixtures. Not pushed / no PR — PAUSED does not ship.
-- **6b (blocked, human-required)**: record 12 MacBook-mic clips +
-  bootstrap baseline. v0.1 = macOS-only, so the v0.1 fixture set is
-  MacBook-only; iPhone clips are deferred to v0.2 sprint (manifest
-  schema already supports them additively). An agent cannot produce
-  Panda's voice; BRIEF forbids TTS / reused clips. This is the `/goal`
-  halt point.
+- **6b (blocked, human-required)**: record 12 clips on Panda's actual
+  dictation mic (AirPods Pro, macOS HFP 16 kHz mono) + bootstrap
+  baseline. v0.1 = macOS-only and Panda dictates wearing AirPods, so
+  the v0.1 fixture environment matches that — baseline must reflect
+  reality or Bug #1's WER delta gets polluted by noise-profile
+  differences. Other sources (MacBook built-in mic / iPhone) deferred
+  to v0.2 sprint (manifest schema already supports them additively via
+  the `source` field). An agent cannot produce Panda's voice; BRIEF
+  forbids TTS / reused clips. This is the `/goal` halt point.
 
 ## Why the whole /goal halts here
 
@@ -46,16 +49,19 @@ fake-advance. So 7 and 8 are deliberately untouched.
 5. Re-fire the same `/goal`; it resumes Sprint 7 (Bug #1) then Sprint 8,
    each gated by `scripts/eval.sh`.
 
-## Fixture scope for v0.1 (corrected 2026-05-20)
+## Fixture scope for v0.1 (corrected 2026-05-28: AirPods, not MacBook mic)
 
-12 MacBook-mic clips: 6 short zh (Bug #1 zone) + 3 long zh + 3 en.
-iPhone clips deferred to v0.2 sprint, not v0.1 — v0.1 is macOS-only per
-BRIEF, pulling iPhone fixtures forward = second-system effect. Manifest
-schema supports adding iPhone entries later without harness change.
-Skipping fixtures entirely and running 7/8 without an oracle was
-rejected: directly violates DONE WHEN + STOP RULES, repeats the
-ghost-binary class of error (changing transcription with no regression
-check).
+12 AirPods Pro clips: 6 short zh (Bug #1 zone) + 3 long zh + 3 en.
+Originally specced as MacBook built-in mic; corrected at resume time
+because Panda's actual daily dictation environment is AirPods Pro.
+Baseline must match dogfood reality — measuring on a mic Panda doesn't
+use would let Bug #1 WER deltas get washed out by noise-profile
+differences across model versions. MacBook-mic / iPhone fixtures are
+deferred to v0.2 sprint (manifest `source` field already supports
+additive sources without harness change). Skipping fixtures entirely
+and running 7/8 without an oracle was rejected: directly violates DONE
+WHEN + STOP RULES, repeats the ghost-binary class of error (changing
+transcription with no regression check).
 
 ## Findings (6a self-review)
 

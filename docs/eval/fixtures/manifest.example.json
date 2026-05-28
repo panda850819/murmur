@@ -5,7 +5,7 @@
       "file": "zh-short-01.wav",
       "reference": "今天天氣很好",
       "tokenization": "character",
-      "source": "macbook-mic",
+      "source": "airpods-pro",
       "notes": "Bug #1 zone: short Chinese clip"
     },
     {
@@ -13,7 +13,7 @@
       "file": "zh-long-01.wav",
       "reference": "我下午三點要跟團隊開一個關於產品方向的會議",
       "tokenization": "character",
-      "source": "macbook-mic",
+      "source": "airpods-pro",
       "notes": null
     },
     {
@@ -21,7 +21,7 @@
       "file": "en-01.wav",
       "reference": "schedule the release review for next Tuesday",
       "tokenization": "word",
-      "source": "macbook-mic",
+      "source": "airpods-pro",
       "notes": null
     }
   ]
