@@ -13,14 +13,23 @@ final class ScriptNormalizerTests: XCTestCase {
     }
 
     /// Regression guard: detectLanguage:true also yields ja/ko, whose kanji
-    /// must NOT be Hans→Hant rewritten. Removing the language gate fails here.
+    /// must NOT be Hans→Hant rewritten. This is a real gate test, not
+    /// incidentally true: 会→會 DOES transform, so removing the gate (calling
+    /// toTraditional unconditionally) would turn this input into 東京で會議…
+    /// and fail the assertion.
     func testJapaneseIsPreserved() {
         let ja = "東京で会議をします"
         XCTAssertEqual(ScriptNormalizer.normalize(ja, language: "ja"), ja)
     }
 
+    /// Cantonese (yue) is written Chinese — a Traditional writer wants it
+    /// Traditional too, so it IS normalized (unlike ja/ko).
+    func testCantoneseIsConverted() {
+        XCTAssertEqual(ScriptNormalizer.normalize("点开会", language: "yue"), "點開會")
+    }
+
     func testNonChineseLanguageIsUntouched() {
-        // Even Han-looking text is left alone when the detected language isn't zh.
+        // Even Han-looking text is left alone when the detected language isn't Chinese.
         XCTAssertEqual(ScriptNormalizer.normalize("点开会", language: "en"), "点开会")
     }
 

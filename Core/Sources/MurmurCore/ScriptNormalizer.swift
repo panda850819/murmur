@@ -13,12 +13,18 @@ import Foundation
 /// glyph drift, not vocabulary. Phrase conversion would rewrite words the
 /// speaker actually said (信息→訊息), which is wrong.
 public enum ScriptNormalizer {
+    /// Whisper language codes treated as Chinese for script normalization.
+    /// Mandarin is `zh`, Cantonese is `yue` — both are written Chinese and a
+    /// Traditional writer wants either rendered Traditional. ja/ko/en/etc. are
+    /// excluded: `toTraditional` would rewrite their shared Han characters
+    /// (Japanese 会議→會議) into corrupt Sino glyphs.
+    static let chineseLanguages: Set<String> = ["zh", "yue"]
+
     /// Script guarantee gated by detected language. Only Chinese output is
-    /// normalized; ja/ko/en/etc. pass through untouched — the transcriber runs
-    /// with `detectLanguage:true`, and `toTraditional` would otherwise rewrite
-    /// Japanese/Korean kanji (会議→會議) into corrupt Sino glyphs.
+    /// normalized; everything else passes through untouched. The transcriber
+    /// runs `detectLanguage:true`, so this gate is what keeps non-Chinese safe.
     public static func normalize(_ text: String, language: String) -> String {
-        language == "zh" ? toTraditional(text) : text
+        chineseLanguages.contains(language) ? toTraditional(text) : text
     }
 
     /// Unconditional Simplified→Traditional. Rewrites ANY Han character, so
