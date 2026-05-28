@@ -1,0 +1,67 @@
+{
+  "entries" : [
+    {
+      "id" : "zh-short-01",
+      "referenceCount" : 6,
+      "wer" : 0
+    },
+    {
+      "id" : "zh-short-02",
+      "referenceCount" : 5,
+      "wer" : 0
+    },
+    {
+      "id" : "zh-short-03",
+      "referenceCount" : 5,
+      "wer" : 0
+    },
+    {
+      "id" : "zh-short-04",
+      "referenceCount" : 6,
+      "wer" : 0.16666666666666666
+    },
+    {
+      "id" : "zh-short-05",
+      "referenceCount" : 6,
+      "wer" : 0
+    },
+    {
+      "id" : "zh-short-06",
+      "referenceCount" : 5,
+      "wer" : 0.6
+    },
+    {
+      "id" : "zh-long-01",
+      "referenceCount" : 21,
+      "wer" : 0.047619047619047616
+    },
+    {
+      "id" : "zh-long-02",
+      "referenceCount" : 20,
+      "wer" : 0
+    },
+    {
+      "id" : "zh-long-03",
+      "referenceCount" : 25,
+      "wer" : 0.2
+    },
+    {
+      "id" : "en-01",
+      "referenceCount" : 7,
+      "wer" : 0.5714285714285714
+    },
+    {
+      "id" : "en-02",
+      "referenceCount" : 8,
+      "wer" : 0
+    },
+    {
+      "id" : "en-03",
+      "referenceCount" : 10,
+      "wer" : 0
+    }
+  ],
+  "generatedAt" : "2026-05-28T01:56:28Z",
+  "model" : "openai_whisper-base",
+  "overallWER" : 0.11290322580645161
+}

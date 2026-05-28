@@ -59,6 +59,14 @@ lives entirely in a third-party default, not in the diff. **Manual smoke with
 actual non-English speech is the only gate that catches it.** Caught here at
 sprint Stage 5 ship-gate smoke, fixed in iteration 2.
 
+Update (Sprint 6, 2026-05-28): the WER eval harness (`scripts/eval.sh` +
+human-recorded fixtures) is now a second, automated gate. The v0.1 baseline
+encodes the Bug #1 zone (zh-short-06 「五點半開會」 at WER 0.60), so a later
+change that worsens short-zh detection fails the regression gate without a
+human re-listening. "Only gate" held until Sprint 6; it no longer does. The
+harness still needs real recorded speech, so it complements manual smoke
+rather than removing the need for human fixtures.
+
 ## Removal trigger
 
 None — this is a permanent API-usage requirement, not a workaround. If

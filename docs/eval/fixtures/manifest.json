@@ -1,0 +1,100 @@
+{
+  "clips": [
+    {
+      "id": "zh-short-01",
+      "file": "zh-short-01.wav",
+      "reference": "今天天氣不錯",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "Bug #1 zone: short Chinese clip"
+    },
+    {
+      "id": "zh-short-02",
+      "file": "zh-short-02.wav",
+      "reference": "我等等回你",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "Bug #1 zone: short Chinese clip"
+    },
+    {
+      "id": "zh-short-03",
+      "file": "zh-short-03.wav",
+      "reference": "等等去吃飯",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "Bug #1 zone: short Chinese clip"
+    },
+    {
+      "id": "zh-short-04",
+      "file": "zh-short-04.wav",
+      "reference": "訊息傳出去了",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "Bug #1 zone: short Chinese clip"
+    },
+    {
+      "id": "zh-short-05",
+      "file": "zh-short-05.wav",
+      "reference": "這件事先放著",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "Bug #1 zone: short Chinese clip"
+    },
+    {
+      "id": "zh-short-06",
+      "file": "zh-short-06.wav",
+      "reference": "五點半開會",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "Bug #1 zone: short Chinese clip"
+    },
+    {
+      "id": "zh-long-01",
+      "file": "zh-long-01.wav",
+      "reference": "我下午三點要跟團隊開一個關於產品方向的會議",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": null
+    },
+    {
+      "id": "zh-long-02",
+      "file": "zh-long-02.wav",
+      "reference": "明天可以幫我把這份文件先寄給對方看一下嗎",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": null
+    },
+    {
+      "id": "zh-long-03",
+      "file": "zh-long-03.wav",
+      "reference": "這個 PR 我等等 review 完再 merge 進 main",
+      "tokenization": "character",
+      "source": "airpods-pro",
+      "notes": "mixed zh/en — real dictation pattern"
+    },
+    {
+      "id": "en-01",
+      "file": "en-01.wav",
+      "reference": "schedule the release review for next Tuesday",
+      "tokenization": "word",
+      "source": "airpods-pro",
+      "notes": null
+    },
+    {
+      "id": "en-02",
+      "file": "en-02.wav",
+      "reference": "let me know when you finish the audit",
+      "tokenization": "word",
+      "source": "airpods-pro",
+      "notes": null
+    },
+    {
+      "id": "en-03",
+      "file": "en-03.wav",
+      "reference": "we should ship the beta by end of this week",
+      "tokenization": "word",
+      "source": "airpods-pro",
+      "notes": null
+    }
+  ]
+}
