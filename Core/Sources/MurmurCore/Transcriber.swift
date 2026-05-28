@@ -30,7 +30,7 @@ public actor WhisperKitTranscriber: Transcribing {
         let options = DecodingOptions(task: .transcribe, detectLanguage: true)
         let results = try await kit.transcribe(audioPath: wavURL.path, decodeOptions: options)
         return results
-            .map(\.text)
+            .map { ScriptNormalizer.normalize($0.text, language: $0.language) }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
