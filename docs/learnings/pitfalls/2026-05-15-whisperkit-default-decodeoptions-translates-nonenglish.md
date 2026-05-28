@@ -50,6 +50,12 @@ recording, so it transcribes in whatever language was actually spoken
 (handles mixed Chinese/English dictation). Leave `language: nil` so detection
 drives it; only hard-pin `language:` if you want to force one language.
 
+Update (Sprint 7, 2026-05-28): do **not** hard-pin `language: "zh"` to chase
+short-clip Chinese WER — measured as a pure regression (zh-short unchanged,
+English wrecked). The residual short-zh error is numeral/script normalization,
+not language detection. See
+`2026-05-28-zh-residual-wer-is-numeral-and-script-not-language-detection.md`.
+
 ## Why it slips past code review + CI
 
 The model can't run in `swift test` / CI (≈140 MB download + Core ML
