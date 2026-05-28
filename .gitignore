@@ -24,3 +24,8 @@ DerivedData/
 ## Build outputs
 build/
 out/
+
+## gbrain MCP write_through artifacts (server writes brain pages cwd-relative;
+## the canonical brain lives elsewhere). Root-anchored so docs/sessions/ stays tracked.
+/projects/
+/sessions/
