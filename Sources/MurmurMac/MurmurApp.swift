@@ -59,6 +59,13 @@ struct ContentView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
+            if dictation.canEnhance {
+                Toggle("Clean up with AI", isOn: $dictation.enhanceEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .fixedSize()
+            }
+
             if !hotkey.allPermissionsGranted {
                 VStack(spacing: 6) {
                     Text("Murmur needs two permissions. Enable both, then "

@@ -114,6 +114,15 @@ public extension Transcriber {
                 resolvedBase = nil
             }
         }
-        return Transcriber(engine: WhisperKitTranscriber(downloadBase: resolvedBase))
+        let onDevice = WhisperKitTranscriber(downloadBase: resolvedBase)
+        // Wrap in the cloud fallback only when a Groq key is present; otherwise
+        // stay pure on-device (no network, no cloud hop).
+        if let groq = GroqConfig.fromEnvironment() {
+            return Transcriber(engine: FallbackTranscriber(
+                primary: onDevice,
+                fallback: GroqClient(config: groq)
+            ))
+        }
+        return Transcriber(engine: onDevice)
     }
 }
