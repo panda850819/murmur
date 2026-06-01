@@ -29,14 +29,29 @@ public final class DictationCoordinator: ObservableObject {
     @Published public private(set) var lastSavedURL: URL?
     @Published public private(set) var errorMessage: String?
 
+    /// Groq LLM clean-up toggle (BRIEF MVP: optional, default on). Only takes
+    /// effect when an `enhancer` is wired; see `canEnhance`.
+    @Published public var enhanceEnabled: Bool = true
+
     private let recorder: any Recording
     private let transcriber: Transcriber
     private let paster: any Pasting
+    private let enhancer: (any LLMEnhancing)?
 
-    public init(recorder: any Recording, transcriber: Transcriber, paster: any Pasting) {
+    /// True when an LLM enhancer is wired (i.e. a Groq key was present). The UI
+    /// hides the clean-up toggle when this is false.
+    public var canEnhance: Bool { enhancer != nil }
+
+    public init(
+        recorder: any Recording,
+        transcriber: Transcriber,
+        paster: any Pasting,
+        enhancer: (any LLMEnhancing)? = nil
+    ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.paster = paster
+        self.enhancer = enhancer
     }
 
     public static func makeDefault() -> DictationCoordinator {
@@ -45,10 +60,14 @@ public final class DictationCoordinator: ObservableObject {
         #else
         let paster: any Pasting = NoopPaster()
         #endif
+        let enhancer: (any LLMEnhancing)? = GroqConfig.fromEnvironment().map {
+            GroqClient(config: $0)
+        }
         return DictationCoordinator(
             recorder: AudioRecorder(),
             transcriber: .makeDefault(),
-            paster: paster
+            paster: paster,
+            enhancer: enhancer
         )
     }
 
@@ -79,17 +98,35 @@ public final class DictationCoordinator: ObservableObject {
             lastSavedURL = url
             phase = .transcribing
             await transcriber.transcribe(wavURL: url)
-            transcript = transcriber.transcript
             errorMessage = transcriber.lastError
-            if errorMessage == nil, let text = transcript, !text.isEmpty {
+            if errorMessage == nil, let raw = transcriber.transcript, !raw.isEmpty {
+                let text = await enhanced(raw)
+                transcript = text
                 if !paster.paste(text) {
                     errorMessage = "Couldn't auto-paste. Enable Accessibility for "
                         + "Murmur: System Settings ▸ Privacy & Security ▸ "
                         + "Accessibility. (Transcript is on the clipboard — ⌘V "
                         + "to paste manually.)"
                 }
+            } else {
+                transcript = transcriber.transcript
             }
             phase = .idle
+        }
+    }
+
+    /// Best-effort Groq clean-up. Returns the raw transcript unchanged when
+    /// enhance is off, no enhancer is wired, the call throws, or the result is
+    /// empty or trips the sanity filter. Enhance never blocks the paste.
+    private func enhanced(_ raw: String) async -> String {
+        guard enhanceEnabled, let enhancer else { return raw }
+        do {
+            let result = try await enhancer.enhance(raw)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !result.isEmpty, SanityFilter.isClean(result) else { return raw }
+            return result
+        } catch {
+            return raw
         }
     }
 

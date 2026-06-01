@@ -36,6 +36,17 @@ private final class FakePaster: Pasting {
 
 private enum FakeErr: Error { case boom }
 
+private struct FixedEnhancer: LLMEnhancing {
+    enum Outcome: Sendable { case text(String), fail }
+    let outcome: Outcome
+    func enhance(_ text: String) async throws -> String {
+        switch outcome {
+        case .text(let s): return s
+        case .fail: throw FakeErr.boom
+        }
+    }
+}
+
 private struct FixedEngine: Transcribing {
     enum Outcome: Sendable { case text(String), fail }
     let outcome: Outcome
@@ -84,12 +95,14 @@ final class DictationCoordinatorTests: XCTestCase {
     private func makeCoordinator(
         recorder: FakeRecorder,
         engine: any Transcribing,
-        paster: FakePaster? = nil
+        paster: FakePaster? = nil,
+        enhancer: (any LLMEnhancing)? = nil
     ) -> DictationCoordinator {
         DictationCoordinator(
             recorder: recorder,
             transcriber: Transcriber(engine: engine),
-            paster: paster ?? FakePaster()
+            paster: paster ?? FakePaster(),
+            enhancer: enhancer
         )
     }
 
@@ -250,6 +263,128 @@ final class DictationCoordinatorTests: XCTestCase {
         let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("x")))
         await c.cancel()
         XCTAssertEqual(c.phase, .idle)
+    }
+
+    // MARK: Enhance (Groq clean-up)
+
+    @MainActor
+    func testNoEnhancerCanEnhanceFalse() {
+        let c = makeCoordinator(recorder: FakeRecorder(), engine: FixedEngine(outcome: .text("x")))
+        XCTAssertFalse(c.canEnhance)
+    }
+
+    @MainActor
+    func testEnhancerPresentCanEnhanceTrue() {
+        let c = makeCoordinator(
+            recorder: FakeRecorder(),
+            engine: FixedEngine(outcome: .text("x")),
+            enhancer: FixedEnhancer(outcome: .text("y"))
+        )
+        XCTAssertTrue(c.canEnhance)
+    }
+
+    @MainActor
+    func testEnhanceCleansTranscriptAndPastesCleaned() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("um i will be there in ten minutes")),
+            paster: paster,
+            enhancer: FixedEnhancer(outcome: .text("I'll be there in 10 minutes."))
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "I'll be there in 10 minutes.")
+        XCTAssertEqual(paster.pasted, ["I'll be there in 10 minutes."])
+    }
+
+    @MainActor
+    func testEnhanceDisabledKeepsRaw() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("raw text")),
+            paster: paster,
+            enhancer: FixedEnhancer(outcome: .text("ENHANCED"))
+        )
+        c.enhanceEnabled = false
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "raw text")
+        XCTAssertEqual(paster.pasted, ["raw text"])
+    }
+
+    @MainActor
+    func testEnhanceFailureFallsBackToRaw() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("raw text")),
+            paster: paster,
+            enhancer: FixedEnhancer(outcome: .fail)
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "raw text", "enhance throw must not lose the transcript")
+        XCTAssertEqual(paster.pasted, ["raw text"])
+        XCTAssertNil(c.errorMessage)
+    }
+
+    @MainActor
+    func testEnhanceFailingSanityFilterFallsBackToRaw() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("raw text")),
+            paster: paster,
+            enhancer: FixedEnhancer(outcome: .text("great work 🎉"))
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "raw text", "emoji output must be rejected, raw kept")
+        XCTAssertEqual(paster.pasted, ["raw text"])
+    }
+
+    @MainActor
+    func testEmptyEnhanceResultFallsBackToRaw() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("raw text")),
+            paster: paster,
+            enhancer: FixedEnhancer(outcome: .text("   "))
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "raw text")
+        XCTAssertEqual(paster.pasted, ["raw text"])
+    }
+
+    @MainActor
+    func testEmptyTranscriptSkipsEnhance() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("")),
+            paster: paster,
+            enhancer: FixedEnhancer(outcome: .text("SHOULD NOT APPEAR"))
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(paster.pasted.isEmpty, "empty transcript: no enhance, no paste")
+        XCTAssertEqual(c.transcript, "")
     }
 
     /// A hotkey-cancel that lands while a transcribe is in flight must not
