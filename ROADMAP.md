@@ -32,8 +32,9 @@ Progress bar = 5 segments, 20% each: `▰▰▰▱▱` = 60%.
 
 ```
 macOS core        ▰▰▰▰▰  ~95%   record→transcribe→enhance→paste; Groq fallback + sanity filter built
+macOS 3 modes     ▰▱▱▱▱  ~20%   dictate done; translate + ask reuse M1 GroqClient (UNBLOCKED)
 iOS foundation    ▰▰▰▱▱  ~55%   arch-B skeleton build-green, UNMEASURED on device
-Typeless UX        ▱▱▱▱▱   0%    edit / translate / in-keyboard mic — none started
+iOS keyboard UX    ▱▱▱▱▱   0%    arch settled (arch-B + session window); gated on device measurement only
 Dictionary+brain   ▱▱▱▱▱   0%    the actual endgame differentiator — none started
 History + stats    ▱▱▱▱▱   0%    none started
 Distribution       ▱▱▱▱▱   0%    no DMG, no TestFlight yet
@@ -41,13 +42,25 @@ Distribution       ▱▱▱▱▱   0%    no DMG, no TestFlight yet
 
 ---
 
-## 🔴 Blocking decision (resolve before keyboard UX work)
+## ✅ Resolved (2026-06-01 mic spike `wf_ea67c577-101`, high confidence)
 
-**Can a keyboard extension use the mic, or not?** Sprint 10 feasibility concluded
-NO (Apple bans mic in all app extensions since iOS 8) → forced arch-B (host app
-records, keyboard only inserts). But **Typeless visibly puts a live mic inside its
-keyboard panel** ("按住不放 🎤"). Both cannot be true. Until this is settled, every
-in-keyboard-record feature below is architecturally unanchored.
+**Can a keyboard extension use the mic? NO — confirmed, citation-verified.** Apple
+blocks mic capture from every app extension at the OS process level; Full Access
+(RequestsOpenAccess) does NOT unlock it (its capability list omits mic; playback ≠
+capture). On-device STT in-extension is independently dead: whisper-tiny ~125–273 MB
+RSS vs a ~30–50 MB keyboard jetsam cap → guaranteed OOM-kill.
+
+**Typeless does NOT contradict this.** Its in-keyboard mic is a UI trigger only; the
+real recording runs in the Typeless **host app**. Its own App Store listing says
+dictation "keep[s] listening" after the keyboard closes / across app-switches —
+impossible for an extension (torn down on dismissal). So Typeless is arch-B too.
+
+→ **arch-B confirmed** (host records → App Group → keyboard inserts), exactly the
+walking skeleton on this branch. The win from the spike: copy Wispr Flow's
+**pre-authorized session window** so the host-app bounce is once-per-window
+(5min/15min/1hr), not once-per-dictation. Hard edge: a Darwin notification will NOT
+resume a suspended/terminated host, so the host must hold an active session — the
+session-window pre-auth is load-bearing, not cosmetic.
 
 - If Typeless uses Full Access mic → arch-A is alive, the whole handoff dance (switch
   to app, record, switch back, tap Insert) is unnecessary, and the UX gets far better.
@@ -93,21 +106,43 @@ in-keyboard-record feature below is architecturally unanchored.
 
 ## Milestone 3 — Typeless-grade keyboard UX (needs 🔴 resolved first)
 
+> **Reframed 2026-06-01** after seeing Typeless's macOS desktop app: on the
+> desktop Typeless is a pure **three-mode hotkey app, no keyboard extension**.
+> That is exactly murmur's macOS architecture (global hotkey + Accessibility
+> paste + mic). So macOS parity is UNBLOCKED and near-term — the mic-in-keyboard
+> 🔴 risk applies only to the iOS keyboard track (M3b), not here.
+
+### M3a — macOS three modes (unblocked, reuses M1 GroqClient)
+
+Typeless macOS hotkey map: 口述 = Right Cmd · 翻譯 = Right Shift+Right Cmd ·
+詢問 = / + Right Cmd. murmur's dictate hotkey is already Right Cmd.
+
 | Feature | Status | Notes |
 |---|---|---|
-| In-keyboard mic (record without leaving app) | 🔲 | gated on the mic-in-ext decision above |
-| Mode toggle: 口述 / 編輯 / 翻譯 | 🔲 | three-state keyboard switcher |
-| **Edit mode** (voice command rewrites selected text) | 🔲 | needs server LLM; "Add coffee to the list" → edits selection |
-| **Translate mode** (speak → insert target-lang text) | 🔲 | needs server LLM; target lang picker |
-| Language target picker (繁中 / EN / …) | 🔲 | onboarding + settings |
+| 口述 dictate + auto-cleanup | ✅ | M1: record→transcribe→enhance→paste. Typeless's "um 7am→3pm" demo = our enhance |
+| **翻譯 mode** (speak → insert target-lang) | 🔲 | new hotkey chord + `GroqClient.chat` translate prompt + target-lang setting |
+| **詢問 mode** (ask about selected text) | 🔲 | new hotkey + read selection via Accessibility + `GroqClient.chat` |
+| Target-language setting | 🔲 | one Picker; default 英語(美國) |
+| Web-search in 詢問 (stretch) | 🔲 | Typeless "Searching the web"; beyond Groq chat, defer |
+
+`▰▱▱▱▱` ~20% (dictate+enhance done; translate/ask reuse the M1 client)
+
+### M3b — iOS keyboard UX (arch settled; gated on device measurement only)
+
+| Feature | Status | Notes |
+|---|---|---|
+| ~~In-keyboard mic~~ | ❌ | impossible by OS law — host app records (arch-B confirmed) |
+| **Pre-authorized session window** (host holds mic) | 🔲 | Wispr-Flow pattern; bounce to host once per window, not per dictation |
+| Host must hold active session | 🔲 | Darwin notification won't resume a suspended host — load-bearing |
+| Mode toggle / translate / ask in keyboard | 🔲 | iOS port of M3a once on-device measured |
 | In-keyboard keys (換行 / delete / globe) | 🔲 | basic keyboard chrome |
 
 `▱▱▱▱▱` 0%
 
-> ⚠️ BRIEF tension: edit + translate both need **server-side LLM**, which softens
-> the on-device-privacy posture. Typeless has the same unresolved contradiction
-> (claims local-private history, but translate/edit clearly hit cloud). Decide
-> murmur's stance explicitly, don't inherit the contradiction.
+> ⚠️ BRIEF tension: translate + ask both need **server-side LLM**, softening the
+> on-device-privacy posture. Locked decision §3 already accepts the hybrid stance
+> (raw STT on-device, LLM behaviors via Groq). Typeless has the same cloud hop;
+> murmur is just honest about it.
 
 ## Milestone 4 — Dictionary + gbrain flywheel (the real endgame)
 
@@ -146,12 +181,13 @@ in-keyboard-record feature below is architecturally unanchored.
 
 ## Suggested batch order (for confirmation)
 
-1. **Spike**: settle the mic-in-keyboard 🔴 (1 short investigation, unblocks M3)
-2. **Milestone 1**: finish macOS core (Groq fallback + LLM enhance + sanity filter)
-3. **Milestone 2**: on-device iOS measurement (needs Panda's iPhone)
-4. **Milestone 3**: keyboard UX, ordered translate → edit → mode toggle
-5. **Milestone 4**: dictionary + gbrain (the differentiator; do last, do properly)
-6. **Milestone 5–6**: history/stats + distribution
+1. ✅ **Milestone 1**: macOS core (Groq client + enhance + STT fallback + sanity) — DONE, committed `feat/m1-macos-groq-enhance`
+2. **M3a**: macOS three modes — 翻譯 then 詢問 (both reuse M1 `GroqClient.chat`). Unblocked, no iOS hardware needed. ← next
+3. **Spike (M0)**: settle the mic-in-keyboard 🔴 for the iOS track
+4. **Milestone 2**: on-device iOS measurement (needs Panda's iPhone)
+5. **M3b**: iOS keyboard UX (port M3a once arch settled)
+6. **Milestone 4**: dictionary + gbrain (the differentiator; do last, do properly)
+7. **Milestone 5–6**: history/stats + distribution
 
-Out of scope until explicitly pulled in: Power Mode, screen OCR, Android, multi-hotkey.
+Out of scope until explicitly pulled in: Power Mode, screen OCR, Android.
 ```
