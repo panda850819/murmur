@@ -38,6 +38,12 @@ public final class DictationCoordinator: ObservableObject {
     private let paster: any Pasting
     private let enhancer: (any LLMEnhancing)?
 
+    /// On-device proper-noun correction (A'). Applied to the raw transcript
+    /// before enhance/paste. Settable so the SwiftUI layer can inject the shared
+    /// `CorrectionStore` it also drives the capture UI (C) from. `nil` → the
+    /// transcript passes through uncorrected.
+    public var corrector: (any TextCorrecting)?
+
     /// True when an LLM enhancer is wired (i.e. a Groq key was present). The UI
     /// hides the clean-up toggle when this is false.
     public var canEnhance: Bool { enhancer != nil }
@@ -46,12 +52,14 @@ public final class DictationCoordinator: ObservableObject {
         recorder: any Recording,
         transcriber: Transcriber,
         paster: any Pasting,
-        enhancer: (any LLMEnhancing)? = nil
+        enhancer: (any LLMEnhancing)? = nil,
+        corrector: (any TextCorrecting)? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.paster = paster
         self.enhancer = enhancer
+        self.corrector = corrector
     }
 
     public static func makeDefault() -> DictationCoordinator {
@@ -99,7 +107,12 @@ public final class DictationCoordinator: ObservableObject {
             phase = .transcribing
             await transcriber.transcribe(wavURL: url)
             errorMessage = transcriber.lastError
-            if errorMessage == nil, let raw = transcriber.transcript, !raw.isEmpty {
+            if errorMessage == nil, let rawTranscript = transcriber.transcript, !rawTranscript.isEmpty {
+                // A': deterministic proper-noun correction on the raw transcript,
+                // BEFORE enhance. With enhance off (or no Groq key) this is the
+                // whole correction; with it on, enhance sees already-correct
+                // names and its "preserve exactly" prompt keeps them.
+                let raw = corrector?.correct(rawTranscript) ?? rawTranscript
                 let text = await enhanced(raw)
                 transcript = text
                 if !paster.paste(text) {

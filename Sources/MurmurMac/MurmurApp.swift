@@ -35,6 +35,15 @@ struct ContentView: View {
         monitor: GlobalHotKeyMonitor(),
         probe: RealPermissionProbe()
     )
+    /// Shared correction store (A' + C). Drives the on-device proper-noun
+    /// correction the coordinator applies, AND the one-tap capture form below.
+    /// One instance, injected into the coordinator in `.onAppear`.
+    @StateObject private var corrections = CorrectionStore.makeDefault()
+
+    /// One-tap correction form state (C).
+    @State private var showCorrection = false
+    @State private var heardText = ""
+    @State private var intendedText = ""
 
     var body: some View {
         VStack(spacing: 16) {
@@ -113,6 +122,8 @@ struct ContentView: View {
                         .textSelection(.enabled)
                 }
                 .frame(maxHeight: 160)
+
+                correctionCapture
             }
             if let url = dictation.lastSavedURL {
                 Text("Saved: \(url.lastPathComponent)")
@@ -131,7 +142,60 @@ struct ContentView: View {
         }
         .padding(40)
         .frame(minWidth: 360, minHeight: 240)
-        .onAppear { hotkey.attach(to: dictation) }
+        .onAppear {
+            hotkey.attach(to: dictation)
+            dictation.corrector = corrections
+        }
+    }
+
+    /// Mirrors `CorrectionStore.captureCorrection`'s accept rule (same trim
+    /// charset, reject case-only-equal) so Save is disabled rather than a
+    /// dead tap that silently no-ops.
+    private var canSaveCorrection: Bool {
+        let h = heardText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let i = intendedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !h.isEmpty && !i.isEmpty && h.lowercased() != i.lowercased()
+    }
+
+    /// One-tap correction-capture loop (C): teach murmur a {heard → intended}
+    /// pair. The pair persists, fixes that exact mishearing next time, and adds
+    /// its `intended` to the fuzzy term list so near-misses are caught too.
+    @ViewBuilder
+    private var correctionCapture: some View {
+        VStack(spacing: 6) {
+            Button {
+                showCorrection.toggle()
+            } label: {
+                Label("Fix a word", systemImage: "pencil")
+            }
+            .buttonStyle(.link)
+            .controlSize(.small)
+
+            if showCorrection {
+                HStack(spacing: 6) {
+                    TextField("misheard", text: $heardText)
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                    TextField("correct", text: $intendedText)
+                    Button("Save") {
+                        if corrections.captureCorrection(heard: heardText, intended: intendedText) {
+                            heardText = ""
+                            intendedText = ""
+                            showCorrection = false
+                        }
+                    }
+                    .disabled(!canSaveCorrection)
+                }
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+
+                if !corrections.pairs.isEmpty {
+                    Text("\(corrections.pairs.count) correction"
+                        + (corrections.pairs.count == 1 ? "" : "s") + " saved")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
     }
 }
 
