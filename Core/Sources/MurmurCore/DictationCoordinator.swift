@@ -108,12 +108,17 @@ public final class DictationCoordinator: ObservableObject {
             await transcriber.transcribe(wavURL: url)
             errorMessage = transcriber.lastError
             if errorMessage == nil, let rawTranscript = transcriber.transcript, !rawTranscript.isEmpty {
-                // A': deterministic proper-noun correction on the raw transcript,
-                // BEFORE enhance. With enhance off (or no Groq key) this is the
-                // whole correction; with it on, enhance sees already-correct
-                // names and its "preserve exactly" prompt keeps them.
-                let raw = corrector?.correct(rawTranscript) ?? rawTranscript
-                let text = await enhanced(raw)
+                // A': deterministic proper-noun correction. Runs on the raw
+                // transcript BEFORE enhance, then AGAIN on the enhanced output —
+                // Groq's cleanup ("fix capitalization … obvious slips") can
+                // re-mangle a freshly-corrected coined name, so the deterministic
+                // pass gets the last word. The prompt also asks Groq to leave
+                // proper nouns alone, but that is best-effort; this second pass is
+                // the hard guarantee. With enhance off (or no Groq key) it is an
+                // idempotent no-op on already-correct text.
+                let corrected = corrector?.correct(rawTranscript) ?? rawTranscript
+                let cleaned = await enhanced(corrected)
+                let text = corrector?.correct(cleaned) ?? cleaned
                 transcript = text
                 if !paster.paste(text) {
                     errorMessage = "Couldn't auto-paste. Enable Accessibility for "

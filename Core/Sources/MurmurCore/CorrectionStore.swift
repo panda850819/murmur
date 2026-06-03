@@ -38,9 +38,6 @@ public final class CorrectionStore: ObservableObject, TextCorrecting {
         )
     }
 
-    /// Number of gbrain-sourced terms loaded (diagnostic / UI).
-    public var termCount: Int { gbrainTerms.count }
-
     public func correct(_ text: String) -> String {
         corrector.correct(text)
     }

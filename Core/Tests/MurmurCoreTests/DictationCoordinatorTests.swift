@@ -473,9 +473,31 @@ final class DictationCoordinatorTests: XCTestCase {
         await c.toggle()
         await c.toggle()
         let echoSeen = await echo.seen
-        XCTAssertEqual(corrector.seen, ["ship gbrand"], "corrector sees the RAW transcript")
+        // A' runs on the RAW transcript first, then AGAIN on the enhanced output.
+        XCTAssertEqual(corrector.seen, ["ship gbrand", "ship gbrain"],
+                       "corrector sees the raw transcript, then the enhanced output")
         XCTAssertEqual(echoSeen, ["ship gbrain"], "enhancer sees the CORRECTED transcript")
         XCTAssertEqual(c.transcript, "ship gbrain")
+    }
+
+    @MainActor
+    func testCorrectionReappliedAfterEnhanceCannotUndoIt() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        // Simulate Groq cleanup re-mangling a freshly-corrected name back to the
+        // mishearing ("fix capitalization" gone wrong). The post-enhance A' pass
+        // must restore it — the deterministic corrector gets the last word.
+        let mangling = FixedEnhancer(outcome: .text("ship gbrand"))
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand")),
+            enhancer: mangling,
+            corrector: FakeCorrector(["gbrand": "gbrain"])
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "ship gbrain",
+                       "post-enhance A' restores a name the enhancer re-mangled")
     }
 
     @MainActor
