@@ -116,9 +116,15 @@ public final class DictationCoordinator: ObservableObject {
                 // proper nouns alone, but that is best-effort; this second pass is
                 // the hard guarantee. With enhance off (or no Groq key) it is an
                 // idempotent no-op on already-correct text.
-                let corrected = corrector?.correct(rawTranscript) ?? rawTranscript
-                let cleaned = await enhanced(corrected)
-                let text = corrector?.correct(cleaned) ?? cleaned
+                // Capture the corrector once: `corrector` is a public var the
+                // SwiftUI layer can swap, and there is an `await` (the enhance
+                // hop) between the two A' passes. Binding it here guarantees A'
+                // and B's glossary are sourced from the SAME instance for this
+                // whole dictation, even if the property is reassigned mid-flight.
+                let activeCorrector = corrector
+                let corrected = activeCorrector?.correct(rawTranscript) ?? rawTranscript
+                let cleaned = await enhanced(corrected, glossary: activeCorrector?.glossaryTerms ?? [])
+                let text = activeCorrector?.correct(cleaned) ?? cleaned
                 transcript = text
                 if !paster.paste(text) {
                     errorMessage = "Couldn't auto-paste. Enable Accessibility for "
@@ -136,12 +142,11 @@ public final class DictationCoordinator: ObservableObject {
     /// Best-effort Groq clean-up. Returns the raw transcript unchanged when
     /// enhance is off, no enhancer is wired, the call throws, or the result is
     /// empty or trips the sanity filter. Enhance never blocks the paste.
-    private func enhanced(_ raw: String) async -> String {
+    private func enhanced(_ raw: String, glossary: [String]) async -> String {
         guard enhanceEnabled, let enhancer else { return raw }
-        // B': hand the LLM murmur's proper-noun glossary, pulled fresh so a
-        // correction captured (C) this session is in scope immediately. Empty
-        // when no corrector is wired — the enhancer then uses the base prompt.
-        let glossary = corrector?.glossaryTerms ?? []
+        // B': the LLM gets murmur's proper-noun glossary (passed in from the
+        // caller's captured corrector so A' and B' share one source this
+        // dictation). Empty ⇒ the enhancer falls back to the base prompt.
         do {
             let result = try await enhancer.enhance(raw, glossary: glossary)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
