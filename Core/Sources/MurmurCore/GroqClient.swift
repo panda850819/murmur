@@ -81,8 +81,13 @@ public actor GroqClient {
     /// glossary (B'). The glossary is murmur's canonical spellings (gbrain
     /// entities + user-captured corrections); the model is told to use them
     /// exactly when the speech clearly refers to one and — the load-bearing
-    /// guard against LLM over-correction — to leave unrelated words alone. A'
-    /// still re-asserts the names deterministically after enhance, so B's
+    /// guard against LLM over-correction — to leave unrelated words alone. The
+    /// "when the speech clearly refers to one" hedge is also the B'-side analog
+    /// of A's real-word input guard: the glossary includes entity terms that are
+    /// also real words (Bob, midnight, Axis), and this hedge plus the post-enhance
+    /// A' pass — not a hard filter — are the accepted mitigation against coercing
+    /// such a word the speaker used as itself (see `ProperNounCorrector.glossary`).
+    /// A' still re-asserts the names deterministically after enhance, so B's
     /// distinct value is segmentation and code-mix handling that uses the
     /// proper-noun vocabulary as context. Empty glossary ⇒ the base prompt
     /// verbatim, identical to pre-B' behavior. The full list is injected;
