@@ -33,6 +33,26 @@ final class CorrectionStoreTests: XCTestCase {
         XCTAssertEqual(store.correct("the gbrand thing"), "the gbrain thing")
     }
 
+    func testCapturedIntendedFeedsGlossaryTerms() {
+        // B': a captured correction's `intended` side must surface in
+        // glossaryTerms (the LLM enhance glossary), not just the fuzzy matcher.
+        // Guards CorrectionStore.makeCorrector keeping `capturedTerms + gbrainTerms`.
+        let store = makeStore(url: freshURL())
+        XCTAssertTrue(store.captureCorrection(heard: "gbrand", intended: "gbrain"))
+        XCTAssertEqual(store.glossaryTerms, ["gbrain"])
+        // Multi-token intended splits into its Latin tokens.
+        XCTAssertTrue(store.captureCorrection(heard: "som", intended: "Sommet Labs"))
+        XCTAssertEqual(Set(store.glossaryTerms), ["gbrain", "Sommet", "Labs"])
+    }
+
+    func testGlossaryTermsUnionsGbrainAndCaptured() {
+        let store = makeStore(terms: ["Yei"], url: freshURL())
+        XCTAssertEqual(store.glossaryTerms, ["Yei"])
+        XCTAssertTrue(store.captureCorrection(heard: "gbrand", intended: "gbrain"))
+        // Captured first (fresher), then gbrain — mirrors makeCorrector order.
+        XCTAssertEqual(store.glossaryTerms, ["gbrain", "Yei"])
+    }
+
     func testCaptureRejectsEmptyOrEqual() {
         let store = makeStore(url: freshURL())
         XCTAssertFalse(store.captureCorrection(heard: "  ", intended: "x"))

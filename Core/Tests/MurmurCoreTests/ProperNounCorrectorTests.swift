@@ -16,6 +16,26 @@ final class ProperNounCorrectorTests: XCTestCase {
         return ProperNounCorrector(dictionary: dict) { realWords.contains($0.lowercased()) }
     }
 
+    // MARK: Glossary (B' — shared term universe)
+
+    func testGlossaryReflectsTermsInOrder() {
+        let c = makeCorrector(terms: ["gbrain", "Yei", "Sommet"])
+        XCTAssertEqual(c.glossary, ["gbrain", "Yei", "Sommet"],
+                       "glossary surfaces the canonical terms in first-seen order")
+    }
+
+    func testGlossaryDedupesCaseInsensitively() {
+        // The corrector keeps the first casing on a case-insensitive collision;
+        // the glossary mirrors that single deduped universe.
+        let c = makeCorrector(terms: ["Yei", "yei", "gbrain"])
+        XCTAssertEqual(c.glossary, ["Yei", "gbrain"])
+    }
+
+    func testGlossaryEmptyWithoutTerms() {
+        XCTAssertEqual(makeCorrector(mappings: [("gbrand", "gbrain")]).glossary, [],
+                       "direct mappings are not glossary terms")
+    }
+
     // MARK: Pass-through
 
     func testEmptyStringUnchanged() {

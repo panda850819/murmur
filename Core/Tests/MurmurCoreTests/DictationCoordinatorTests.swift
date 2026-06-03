@@ -39,7 +39,7 @@ private enum FakeErr: Error { case boom }
 private struct FixedEnhancer: LLMEnhancing {
     enum Outcome: Sendable { case text(String), fail }
     let outcome: Outcome
-    func enhance(_ text: String) async throws -> String {
+    func enhance(_ text: String, glossary: [String]) async throws -> String {
         switch outcome {
         case .text(let s): return s
         case .fail: throw FakeErr.boom
@@ -64,8 +64,10 @@ private struct FixedEngine: Transcribing {
 /// recorded state is concurrency-safe without opting out of checking.
 private actor EchoEnhancer: LLMEnhancing {
     private(set) var seen: [String] = []
-    func enhance(_ text: String) async throws -> String {
+    private(set) var seenGlossary: [[String]] = []
+    func enhance(_ text: String, glossary: [String]) async throws -> String {
         seen.append(text)
+        seenGlossary.append(glossary)
         return text
     }
 }
@@ -76,7 +78,11 @@ private actor EchoEnhancer: LLMEnhancing {
 private final class FakeCorrector: TextCorrecting {
     private(set) var seen: [String] = []
     private let map: [String: String]
-    init(_ map: [String: String]) { self.map = map }
+    let glossaryTerms: [String]
+    init(_ map: [String: String], glossary: [String] = []) {
+        self.map = map
+        self.glossaryTerms = glossary
+    }
     func correct(_ text: String) -> String {
         seen.append(text)
         return map.reduce(text) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
@@ -478,6 +484,52 @@ final class DictationCoordinatorTests: XCTestCase {
                        "corrector sees the raw transcript, then the enhanced output")
         XCTAssertEqual(echoSeen, ["ship gbrain"], "enhancer sees the CORRECTED transcript")
         XCTAssertEqual(c.transcript, "ship gbrain")
+    }
+
+    @MainActor
+    func testEnhanceReceivesGlossaryFromCorrector() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // B': the corrector's glossary reaches the enhance call so the cloud
+        // pass has murmur's proper-noun vocabulary as context.
+        let corrector = FakeCorrector(["gbrand": "gbrain"], glossary: ["gbrain", "Yei"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [["gbrain", "Yei"]],
+                       "enhancer receives the corrector's glossary terms")
+    }
+
+    @MainActor
+    func testEnhancerNotCalledWhenEnhanceDisabled() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // A non-empty glossary is wired but enhance is OFF: the enhancer must
+        // not be called at all. Asserts the `guard enhanceEnabled` in
+        // enhanced() — a real logic flip (removing the guard) would record a
+        // call here. (The no-corrector ⇒ empty-glossary path is the bare
+        // `?? []` default, exercised implicitly by the FixedEnhancer tests.)
+        let corrector = FakeCorrector(["gbrand": "gbrain"], glossary: ["gbrain", "Yei"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        c.enhanceEnabled = false
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertTrue(seenGlossary.isEmpty, "enhancer must not run when enhance is disabled")
+        XCTAssertEqual(c.transcript, "ship gbrain", "A' still applies deterministically")
     }
 
     @MainActor

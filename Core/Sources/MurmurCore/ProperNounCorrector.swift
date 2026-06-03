@@ -56,6 +56,22 @@ public struct ProperNounCorrector {
         self.minFuzzyLength = max(1, minFuzzyLength)
     }
 
+    /// Canonical proper-noun spellings the fuzzy pass targets, in first-seen
+    /// order. The LLM enhance glossary (B') is drawn from this same set, so the
+    /// deterministic (A') and cloud (B') layers share one term universe.
+    ///
+    /// ACCEPTED ASYMMETRY (reviewed 2026-06-03): this set intentionally includes
+    /// entity terms that are also real words — "Bob", "Axis", "Nous", "midnight".
+    /// A' refuses to RE-CASE such a token when the speaker used it as itself (the
+    /// `isRealWord` input guard in `corrected(token:)`); B' has no such
+    /// deterministic guard, so the LLM could over-coerce e.g. "midnight" →
+    /// "Midnight". This is NOT filtered out, because those terms are usually the
+    /// names the speaker means (Bob is a person; Axis/Nous are companies), and
+    /// filtering would lose B's reinforcement of exactly them. The B'-side
+    /// mitigation is the enhance prompt's "use these … when the speech clearly
+    /// refers to one" hedge plus the post-enhance A' pass — not A's input guard.
+    public var glossary: [String] { terms }
+
     /// Correct every Latin-script word token in `text`, preserving all other
     /// characters (spacing, punctuation, digits, CJK) exactly.
     ///

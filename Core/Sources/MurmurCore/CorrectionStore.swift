@@ -42,6 +42,13 @@ public final class CorrectionStore: ObservableObject, TextCorrecting {
         corrector.correct(text)
     }
 
+    /// The proper-noun glossary for the LLM enhance pass (B'): the canonical
+    /// terms the live corrector targets — gbrain entities plus the Latin tokens
+    /// of every captured correction's `intended` side. Reads the rebuilt
+    /// corrector, so a capture made this session is reflected on the next
+    /// dictation's enhance call.
+    public var glossaryTerms: [String] { corrector.glossary }
+
     /// Persist a one-tap correction (C). Trims both sides; a pair with an empty
     /// side, or where `heard` equals `intended` case-insensitively, is ignored
     /// and `false` is returned. Rebuilds the live corrector so the next

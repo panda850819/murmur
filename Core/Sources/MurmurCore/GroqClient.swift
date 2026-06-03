@@ -8,9 +8,12 @@ import FoundationNetworking
 /// actor boundary into `DictationCoordinator`.
 public protocol LLMEnhancing: Sendable {
     /// Clean up dictated speech-to-text. Returns the cleaned text, same
-    /// language and script. Throws on transport/decode failure — callers treat
+    /// language and script. `glossary` carries the canonical spellings of the
+    /// proper nouns murmur knows (B'); the enhancer biases name and
+    /// segmentation handling toward them and leaves unrelated words alone. Pass
+    /// `[]` for none. Throws on transport/decode failure — callers treat
     /// enhance as best-effort and fall back to the raw transcript.
-    func enhance(_ text: String) async throws -> String
+    func enhance(_ text: String, glossary: [String]) async throws -> String
 }
 
 /// Groq connection settings. Key is resolved from `GROQ_API_KEY` for dogfood;
@@ -63,7 +66,9 @@ public actor GroqClient {
 
     // MARK: Chat (enhance / later translate+edit)
 
-    private static let cleanupSystemPrompt = """
+    /// Base cleanup instruction. `cleanupSystemPrompt(glossary:)` appends a
+    /// proper-noun glossary clause to it when the caller supplies terms (B').
+    private static let cleanupSystemPromptBase = """
     You clean up dictated speech-to-text. Fix punctuation, capitalization, and \
     obvious transcription slips. Remove filler words (um, uh, like). Preserve the \
     original meaning, language, and script exactly. Never change the spelling or \
@@ -72,8 +77,52 @@ public actor GroqClient {
     only the cleaned text, with no preamble, quotes, or commentary.
     """
 
-    public func enhance(_ text: String) async throws -> String {
-        try await chat(system: Self.cleanupSystemPrompt, user: text)
+    /// System prompt for the cleanup pass, optionally carrying a proper-noun
+    /// glossary (B'). The glossary is murmur's canonical spellings (gbrain
+    /// entities + user-captured corrections); the model is told to use them
+    /// exactly when the speech clearly refers to one and — the load-bearing
+    /// guard against LLM over-correction — to leave unrelated words alone. The
+    /// "when the speech clearly refers to one" hedge is also the B'-side analog
+    /// of A's real-word input guard: the glossary includes entity terms that are
+    /// also real words (Bob, midnight, Axis), and this hedge plus the post-enhance
+    /// A' pass — not a hard filter — are the accepted mitigation against coercing
+    /// such a word the speaker used as itself (see `ProperNounCorrector.glossary`).
+    /// A' still re-asserts the names deterministically after enhance, so B's
+    /// distinct value is segmentation and code-mix handling that uses the
+    /// proper-noun vocabulary as context. Empty glossary ⇒ the base prompt
+    /// verbatim, identical to pre-B' behavior. The full list is injected;
+    /// relevance filtering is deferred until the term set is large (see brief).
+    static func cleanupSystemPrompt(glossary: [String]) -> String {
+        let names = glossary
+            .map(sanitizeGlossaryEntry)
+            .filter { !$0.isEmpty }
+        guard !names.isEmpty else { return cleanupSystemPromptBase }
+        return cleanupSystemPromptBase + "\n\n" + """
+        Known proper nouns (use these exact spellings when the speech clearly \
+        refers to one; do NOT pull unrelated words toward this list): \
+        \(names.joined(separator: ", ")).
+        """
+    }
+
+    /// Defense-in-depth before a term is interpolated into the system prompt. A
+    /// well-formed term is a single Latin token, but `JSONTermSource` does not
+    /// shape-enforce the runtime `gbrain-terms.json` (nor a future gbrain-
+    /// flywheel term sourced from ingested external text). Replace anything
+    /// outside letters/digits/space/hyphen with a space, then collapse — so a
+    /// term carrying a newline, comma, or instruction text cannot break the
+    /// comma-joined list or start a new prompt line. No-op on real terms.
+    static func sanitizeGlossaryEntry(_ raw: String) -> String {
+        let cleaned = raw.unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) { return Character(scalar) }
+            return scalar == "-" ? "-" : " "
+        }
+        return String(cleaned)
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+    }
+
+    public func enhance(_ text: String, glossary: [String]) async throws -> String {
+        try await chat(system: Self.cleanupSystemPrompt(glossary: glossary), user: text)
     }
 
     /// One-shot chat completion. The shared primitive translate/edit reuse.
