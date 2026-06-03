@@ -19,6 +19,11 @@ command -v xcodegen >/dev/null || {
     exit 1
 }
 
+# Refresh the baked gbrain term list (A' source A). No-ops when `gbrain` is
+# absent (CI / fresh clone) and keeps the committed snapshot — never empty.
+echo "==> export-gbrain-terms.sh (bake A' dictionary snapshot)"
+./scripts/export-gbrain-terms.sh
+
 echo "==> xcodegen generate"
 xcodegen generate
 

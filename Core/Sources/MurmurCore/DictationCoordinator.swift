@@ -38,6 +38,12 @@ public final class DictationCoordinator: ObservableObject {
     private let paster: any Pasting
     private let enhancer: (any LLMEnhancing)?
 
+    /// On-device proper-noun correction (A'). Applied to the raw transcript
+    /// before enhance/paste. Settable so the SwiftUI layer can inject the shared
+    /// `CorrectionStore` it also drives the capture UI (C) from. `nil` → the
+    /// transcript passes through uncorrected.
+    public var corrector: (any TextCorrecting)?
+
     /// True when an LLM enhancer is wired (i.e. a Groq key was present). The UI
     /// hides the clean-up toggle when this is false.
     public var canEnhance: Bool { enhancer != nil }
@@ -46,12 +52,14 @@ public final class DictationCoordinator: ObservableObject {
         recorder: any Recording,
         transcriber: Transcriber,
         paster: any Pasting,
-        enhancer: (any LLMEnhancing)? = nil
+        enhancer: (any LLMEnhancing)? = nil,
+        corrector: (any TextCorrecting)? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.paster = paster
         self.enhancer = enhancer
+        self.corrector = corrector
     }
 
     public static func makeDefault() -> DictationCoordinator {
@@ -99,8 +107,18 @@ public final class DictationCoordinator: ObservableObject {
             phase = .transcribing
             await transcriber.transcribe(wavURL: url)
             errorMessage = transcriber.lastError
-            if errorMessage == nil, let raw = transcriber.transcript, !raw.isEmpty {
-                let text = await enhanced(raw)
+            if errorMessage == nil, let rawTranscript = transcriber.transcript, !rawTranscript.isEmpty {
+                // A': deterministic proper-noun correction. Runs on the raw
+                // transcript BEFORE enhance, then AGAIN on the enhanced output —
+                // Groq's cleanup ("fix capitalization … obvious slips") can
+                // re-mangle a freshly-corrected coined name, so the deterministic
+                // pass gets the last word. The prompt also asks Groq to leave
+                // proper nouns alone, but that is best-effort; this second pass is
+                // the hard guarantee. With enhance off (or no Groq key) it is an
+                // idempotent no-op on already-correct text.
+                let corrected = corrector?.correct(rawTranscript) ?? rawTranscript
+                let cleaned = await enhanced(corrected)
+                let text = corrector?.correct(cleaned) ?? cleaned
                 transcript = text
                 if !paster.paste(text) {
                     errorMessage = "Couldn't auto-paste. Enable Accessibility for "

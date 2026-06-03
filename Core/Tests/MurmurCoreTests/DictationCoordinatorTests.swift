@@ -58,6 +58,31 @@ private struct FixedEngine: Transcribing {
     }
 }
 
+/// Records the text it was asked to enhance and returns it unchanged, so a test
+/// can prove the enhancer ran on the ALREADY-CORRECTED transcript. An `actor`
+/// (like `GateEngine`) rather than a `@unchecked Sendable` class, so the
+/// recorded state is concurrency-safe without opting out of checking.
+private actor EchoEnhancer: LLMEnhancing {
+    private(set) var seen: [String] = []
+    func enhance(_ text: String) async throws -> String {
+        seen.append(text)
+        return text
+    }
+}
+
+/// Test double for the A' correction seam: substring replacement plus a record
+/// of every input, so a test can assert what the corrector saw.
+@MainActor
+private final class FakeCorrector: TextCorrecting {
+    private(set) var seen: [String] = []
+    private let map: [String: String]
+    init(_ map: [String: String]) { self.map = map }
+    func correct(_ text: String) -> String {
+        seen.append(text)
+        return map.reduce(text) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
+    }
+}
+
 /// Suspends in `transcribe` until `release()`; `waitUntilEntered()` lets the
 /// test deterministically observe the `.transcribing` phase.
 private actor GateEngine: Transcribing {
@@ -96,13 +121,15 @@ final class DictationCoordinatorTests: XCTestCase {
         recorder: FakeRecorder,
         engine: any Transcribing,
         paster: FakePaster? = nil,
-        enhancer: (any LLMEnhancing)? = nil
+        enhancer: (any LLMEnhancing)? = nil,
+        corrector: (any TextCorrecting)? = nil
     ) -> DictationCoordinator {
         DictationCoordinator(
             recorder: recorder,
             transcriber: Transcriber(engine: engine),
             paster: paster ?? FakePaster(),
-            enhancer: enhancer
+            enhancer: enhancer,
+            corrector: corrector
         )
     }
 
@@ -410,5 +437,111 @@ final class DictationCoordinatorTests: XCTestCase {
         XCTAssertEqual(c.phase, .idle)
         XCTAssertEqual(c.transcript, "gated")
         XCTAssertEqual(paster.pasted, ["gated"])
+    }
+
+    // MARK: Correction (A')
+
+    @MainActor
+    func testCorrectionAppliedWhenNoEnhancer() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("use gbrand here")),
+            paster: paster,
+            corrector: FakeCorrector(["gbrand": "gbrain"])
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "use gbrain here", "on-device correction applies with no enhancer")
+        XCTAssertEqual(paster.pasted, ["use gbrain here"])
+    }
+
+    @MainActor
+    func testCorrectionRunsOnRawBeforeEnhance() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        let corrector = FakeCorrector(["gbrand": "gbrain"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let echoSeen = await echo.seen
+        // A' runs on the RAW transcript first, then AGAIN on the enhanced output.
+        XCTAssertEqual(corrector.seen, ["ship gbrand", "ship gbrain"],
+                       "corrector sees the raw transcript, then the enhanced output")
+        XCTAssertEqual(echoSeen, ["ship gbrain"], "enhancer sees the CORRECTED transcript")
+        XCTAssertEqual(c.transcript, "ship gbrain")
+    }
+
+    @MainActor
+    func testCorrectionReappliedAfterEnhanceCannotUndoIt() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        // Simulate Groq cleanup re-mangling a freshly-corrected name back to the
+        // mishearing ("fix capitalization" gone wrong). The post-enhance A' pass
+        // must restore it — the deterministic corrector gets the last word.
+        let mangling = FixedEnhancer(outcome: .text("ship gbrand"))
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand")),
+            enhancer: mangling,
+            corrector: FakeCorrector(["gbrand": "gbrain"])
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "ship gbrain",
+                       "post-enhance A' restores a name the enhancer re-mangled")
+    }
+
+    @MainActor
+    func testCorrectionAppliedWithEnhanceDisabled() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("gbrand")),
+            enhancer: FixedEnhancer(outcome: .text("ENHANCED")),
+            corrector: FakeCorrector(["gbrand": "gbrain"])
+        )
+        c.enhanceEnabled = false
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "gbrain", "correction still runs when enhance is off")
+    }
+
+    @MainActor
+    func testNoCorrectorPassesTranscriptThrough() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("gbrand stays")),
+            corrector: nil
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "gbrand stays")
+    }
+
+    @MainActor
+    func testEmptyTranscriptSkipsCorrection() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let corrector = FakeCorrector(["x": "y"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("")),
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(corrector.seen.isEmpty, "empty transcript must not invoke the corrector")
     }
 }

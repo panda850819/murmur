@@ -66,9 +66,10 @@ public actor GroqClient {
     private static let cleanupSystemPrompt = """
     You clean up dictated speech-to-text. Fix punctuation, capitalization, and \
     obvious transcription slips. Remove filler words (um, uh, like). Preserve the \
-    original meaning, language, and script exactly. Do not translate. Do not \
-    convert between Traditional and Simplified Chinese. Output only the cleaned \
-    text, with no preamble, quotes, or commentary.
+    original meaning, language, and script exactly. Never change the spelling or \
+    capitalization of proper nouns, brand, product, or project names. Do not \
+    translate. Do not convert between Traditional and Simplified Chinese. Output \
+    only the cleaned text, with no preamble, quotes, or commentary.
     """
 
     public func enhance(_ text: String) async throws -> String {
