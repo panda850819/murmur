@@ -89,7 +89,7 @@ public actor GroqClient {
     /// relevance filtering is deferred until the term set is large (see brief).
     static func cleanupSystemPrompt(glossary: [String]) -> String {
         let names = glossary
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map(sanitizeGlossaryEntry)
             .filter { !$0.isEmpty }
         guard !names.isEmpty else { return cleanupSystemPromptBase }
         return cleanupSystemPromptBase + "\n\n" + """
@@ -97,6 +97,23 @@ public actor GroqClient {
         refers to one; do NOT pull unrelated words toward this list): \
         \(names.joined(separator: ", ")).
         """
+    }
+
+    /// Defense-in-depth before a term is interpolated into the system prompt. A
+    /// well-formed term is a single Latin token, but `JSONTermSource` does not
+    /// shape-enforce the runtime `gbrain-terms.json` (nor a future gbrain-
+    /// flywheel term sourced from ingested external text). Replace anything
+    /// outside letters/digits/space/hyphen with a space, then collapse — so a
+    /// term carrying a newline, comma, or instruction text cannot break the
+    /// comma-joined list or start a new prompt line. No-op on real terms.
+    static func sanitizeGlossaryEntry(_ raw: String) -> String {
+        let cleaned = raw.unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) { return Character(scalar) }
+            return scalar == "-" ? "-" : " "
+        }
+        return String(cleaned)
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
     }
 
     public func enhance(_ text: String, glossary: [String]) async throws -> String {
