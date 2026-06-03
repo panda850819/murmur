@@ -56,6 +56,11 @@ public struct ProperNounCorrector {
         self.minFuzzyLength = max(1, minFuzzyLength)
     }
 
+    /// Canonical proper-noun spellings the fuzzy pass targets, in first-seen
+    /// order. The LLM enhance glossary (B') is drawn from this same set, so the
+    /// deterministic (A') and cloud (B') layers share one term universe.
+    public var glossary: [String] { terms }
+
     /// Correct every Latin-script word token in `text`, preserving all other
     /// characters (spacing, punctuation, digits, CJK) exactly.
     ///

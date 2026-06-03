@@ -8,9 +8,12 @@ import FoundationNetworking
 /// actor boundary into `DictationCoordinator`.
 public protocol LLMEnhancing: Sendable {
     /// Clean up dictated speech-to-text. Returns the cleaned text, same
-    /// language and script. Throws on transport/decode failure — callers treat
+    /// language and script. `glossary` carries the canonical spellings of the
+    /// proper nouns murmur knows (B'); the enhancer biases name and
+    /// segmentation handling toward them and leaves unrelated words alone. Pass
+    /// `[]` for none. Throws on transport/decode failure — callers treat
     /// enhance as best-effort and fall back to the raw transcript.
-    func enhance(_ text: String) async throws -> String
+    func enhance(_ text: String, glossary: [String]) async throws -> String
 }
 
 /// Groq connection settings. Key is resolved from `GROQ_API_KEY` for dogfood;
@@ -63,7 +66,9 @@ public actor GroqClient {
 
     // MARK: Chat (enhance / later translate+edit)
 
-    private static let cleanupSystemPrompt = """
+    /// Base cleanup instruction. `cleanupSystemPrompt(glossary:)` appends a
+    /// proper-noun glossary clause to it when the caller supplies terms (B').
+    private static let cleanupSystemPromptBase = """
     You clean up dictated speech-to-text. Fix punctuation, capitalization, and \
     obvious transcription slips. Remove filler words (um, uh, like). Preserve the \
     original meaning, language, and script exactly. Never change the spelling or \
@@ -72,8 +77,30 @@ public actor GroqClient {
     only the cleaned text, with no preamble, quotes, or commentary.
     """
 
-    public func enhance(_ text: String) async throws -> String {
-        try await chat(system: Self.cleanupSystemPrompt, user: text)
+    /// System prompt for the cleanup pass, optionally carrying a proper-noun
+    /// glossary (B'). The glossary is murmur's canonical spellings (gbrain
+    /// entities + user-captured corrections); the model is told to use them
+    /// exactly when the speech clearly refers to one and — the load-bearing
+    /// guard against LLM over-correction — to leave unrelated words alone. A'
+    /// still re-asserts the names deterministically after enhance, so B's
+    /// distinct value is segmentation and code-mix handling that uses the
+    /// proper-noun vocabulary as context. Empty glossary ⇒ the base prompt
+    /// verbatim, identical to pre-B' behavior. The full list is injected;
+    /// relevance filtering is deferred until the term set is large (see brief).
+    static func cleanupSystemPrompt(glossary: [String]) -> String {
+        let names = glossary
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !names.isEmpty else { return cleanupSystemPromptBase }
+        return cleanupSystemPromptBase + "\n\n" + """
+        Known proper nouns (use these exact spellings when the speech clearly \
+        refers to one; do NOT pull unrelated words toward this list): \
+        \(names.joined(separator: ", ")).
+        """
+    }
+
+    public func enhance(_ text: String, glossary: [String]) async throws -> String {
+        try await chat(system: Self.cleanupSystemPrompt(glossary: glossary), user: text)
     }
 
     /// One-shot chat completion. The shared primitive translate/edit reuse.

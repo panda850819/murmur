@@ -76,6 +76,40 @@ final class GroqClientTests: XCTestCase {
         XCTAssertEqual(messages?.last?["content"] as? String, "usr")
     }
 
+    // MARK: Cleanup system prompt + glossary (B')
+
+    func testCleanupPromptEmptyGlossaryIsBasePrompt() {
+        let base = GroqClient.cleanupSystemPrompt(glossary: [])
+        XCTAssertFalse(base.contains("Known proper nouns"),
+                       "empty glossary must not add the glossary clause")
+        // Pin the base body (not just absence of the clause) so any drift in the
+        // cleanup instruction trips this test — the empty path must stay the
+        // exact pre-B' prompt, the load-bearing "byte-identical" guarantee.
+        XCTAssertTrue(base.hasPrefix("You clean up dictated speech-to-text."),
+                      "base prompt opens with the cleanup instruction")
+        XCTAssertTrue(base.hasSuffix("no preamble, quotes, or commentary."),
+                      "base prompt ends with the output-format instruction, no trailing clause")
+        // Whitespace-only entries collapse to empty ⇒ still the base prompt.
+        XCTAssertEqual(GroqClient.cleanupSystemPrompt(glossary: ["", "  "]), base)
+    }
+
+    func testCleanupPromptInjectsGlossaryNames() {
+        let prompt = GroqClient.cleanupSystemPrompt(glossary: ["gbrain", "Yei", "Sommet"])
+        XCTAssertTrue(prompt.contains("Known proper nouns"))
+        XCTAssertTrue(prompt.contains("gbrain, Yei, Sommet"),
+                      "glossary names are listed comma-separated")
+        XCTAssertTrue(prompt.contains("do NOT pull unrelated words"),
+                      "the over-correction guard clause must be present")
+        // The base instruction is preserved, glossary is additive.
+        XCTAssertTrue(prompt.contains("You clean up dictated speech-to-text"))
+    }
+
+    func testCleanupPromptTrimsGlossaryEntries() {
+        let prompt = GroqClient.cleanupSystemPrompt(glossary: ["  gbrain  ", "Yei"])
+        XCTAssertTrue(prompt.contains("gbrain, Yei"),
+                      "entries are trimmed before joining")
+    }
+
     // MARK: HTTP error mapping
 
     func testThrowIfHTTPErrorOnNon2xx() {

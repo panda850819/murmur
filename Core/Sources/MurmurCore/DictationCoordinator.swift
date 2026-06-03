@@ -138,8 +138,12 @@ public final class DictationCoordinator: ObservableObject {
     /// empty or trips the sanity filter. Enhance never blocks the paste.
     private func enhanced(_ raw: String) async -> String {
         guard enhanceEnabled, let enhancer else { return raw }
+        // B': hand the LLM murmur's proper-noun glossary, pulled fresh so a
+        // correction captured (C) this session is in scope immediately. Empty
+        // when no corrector is wired — the enhancer then uses the base prompt.
+        let glossary = corrector?.glossaryTerms ?? []
         do {
-            let result = try await enhancer.enhance(raw)
+            let result = try await enhancer.enhance(raw, glossary: glossary)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !result.isEmpty, SanityFilter.isClean(result) else { return raw }
             return result

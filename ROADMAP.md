@@ -18,6 +18,17 @@
 3. **Privacy stance = hybrid.** Raw transcription stays on-device (WhisperKit).
    LLM-backed behaviors (enhance/translate/edit) go through Groq cloud. murmur does
    NOT claim full local-privacy as a headline; it is honest about the cloud hop.
+   - **B' glossary disclosure (2026-06-03):** the enhance pass now also sends the
+     *entire* proper-noun glossary (gbrain entities + captured corrections, incl.
+     holdings/people) in the system prompt on **every** cloud enhance call — not
+     just terms spoken in that utterance. Acceptable for personal dogfood (cloud is
+     opt-in via `GROQ_API_KEY`; Groq already receives the transcript). **Pre-M6 /
+     pre-TestFlight hard gate:** before any external distribution, scope the
+     glossary to utterance-relevant terms (only inject terms fuzzy-near the actual
+     transcript) so a no-proper-noun utterance ships an empty glossary. Tracked with,
+     and distinct from, the terms.json-in-bundle at-rest gate (M6 row below). This
+     also subsumes the deferred prompt-size concern and shrinks LLM hallucinated-name
+     risk in one move.
 
 ## Legend
 
@@ -174,6 +185,8 @@ Typeless macOS hotkey map: 口述 = Right Cmd · 翻譯 = Right Shift+Right Cmd 
 |---|---|---|
 | macOS signed DMG | 🔲 | |
 | iOS TestFlight internal | 🔲 | gates the hard-kill criterion |
+| 🔴 **Privacy gate: terms.json at-rest** | 🔲 | gitignore + build-time bake (or runtime-only B file) so Panda's entity graph isn't baked into the bundle + git history |
+| 🔴 **Privacy gate: B' glossary over-the-wire** | 🔲 | utterance-relevance filter so cloud enhance ships only terms fuzzy-near the transcript, not the full roster (see Locked decision §3) |
 
 `▱▱▱▱▱` 0%
 

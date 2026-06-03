@@ -50,4 +50,10 @@ public struct CorrectionDictionary: Equatable, Sendable {
 @MainActor
 public protocol TextCorrecting: AnyObject {
     func correct(_ text: String) -> String
+
+    /// Canonical proper-noun spellings this corrector knows, surfaced for the
+    /// LLM enhance glossary (B'). The same term universe the fuzzy pass draws
+    /// on — gbrain entities plus the user's captured corrections — so A' and B'
+    /// stay sourced from one list.
+    var glossaryTerms: [String] { get }
 }
