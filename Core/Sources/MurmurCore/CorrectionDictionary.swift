@@ -56,4 +56,10 @@ public protocol TextCorrecting: AnyObject {
     /// on — gbrain entities plus the user's captured corrections — so A' and B'
     /// stay sourced from one list.
     var glossaryTerms: [String] { get }
+
+    /// The real-word predicate A' uses to bound over-correction (its input
+    /// guard). Surfaced so B's relevance filter applies the SAME notion of "this
+    /// token is an ordinary word, not a misheard name" — keeping A' and B'
+    /// consistent about which tokens may pull a private term toward the cloud.
+    var isRealWord: (String) -> Bool { get }
 }

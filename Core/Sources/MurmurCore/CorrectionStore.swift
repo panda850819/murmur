@@ -19,7 +19,9 @@ public final class CorrectionStore: ObservableObject, TextCorrecting {
 
     private let gbrainTerms: [Term]
     private let storeURL: URL?
-    private let isRealWord: (String) -> Bool
+    /// Public to satisfy `TextCorrecting.isRealWord`: B's relevance filter reuses
+    /// the same guard A' was built with, so both layers agree on "real word".
+    public let isRealWord: (String) -> Bool
     private var corrector: ProperNounCorrector
 
     public init(
@@ -90,7 +92,9 @@ public final class CorrectionStore: ObservableObject, TextCorrecting {
     }
 
     /// Maximal runs of ASCII letters. "Sommet Labs" → ["Sommet", "Labs"].
-    static func latinTokens(in text: String) -> [String] {
+    /// `nonisolated` (pure, no actor state) so `GlossaryRelevanceFilter` can
+    /// reuse this tokenizer without hopping to the main actor.
+    nonisolated static func latinTokens(in text: String) -> [String] {
         var tokens: [String] = []
         var token = ""
         for ch in text {

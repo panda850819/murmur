@@ -79,9 +79,11 @@ private final class FakeCorrector: TextCorrecting {
     private(set) var seen: [String] = []
     private let map: [String: String]
     let glossaryTerms: [String]
-    init(_ map: [String: String], glossary: [String] = []) {
+    let isRealWord: (String) -> Bool
+    init(_ map: [String: String], glossary: [String] = [], realWords: Set<String> = []) {
         self.map = map
         self.glossaryTerms = glossary
+        self.isRealWord = { realWords.contains($0.lowercased()) }
     }
     func correct(_ text: String) -> String {
         seen.append(text)
@@ -487,12 +489,14 @@ final class DictationCoordinatorTests: XCTestCase {
     }
 
     @MainActor
-    func testEnhanceReceivesGlossaryFromCorrector() async {
+    func testEnhanceGlossaryNarrowedToUtterance() async {
         let rec = FakeRecorder()
         rec.stopURL = wav
         let echo = EchoEnhancer()
-        // B': the corrector's glossary reaches the enhance call so the cloud
-        // pass has murmur's proper-noun vocabulary as context.
+        // B' privacy gate: the corrector's glossary reaches the enhance call but
+        // narrowed to terms the utterance actually names. A' corrects "gbrand" →
+        // "gbrain"; the filter keeps it and drops the unsaid "Yei", so only the
+        // spoken name crosses the wire.
         let corrector = FakeCorrector(["gbrand": "gbrain"], glossary: ["gbrain", "Yei"])
         let c = makeCoordinator(
             recorder: rec,
@@ -503,8 +507,8 @@ final class DictationCoordinatorTests: XCTestCase {
         await c.toggle()
         await c.toggle()
         let seenGlossary = await echo.seenGlossary
-        XCTAssertEqual(seenGlossary, [["gbrain", "Yei"]],
-                       "enhancer receives the corrector's glossary terms")
+        XCTAssertEqual(seenGlossary, [["gbrain"]],
+                       "only the uttered name is injected; unsaid Yei is filtered out")
     }
 
     @MainActor
@@ -595,5 +599,223 @@ final class DictationCoordinatorTests: XCTestCase {
         await c.toggle()
         await c.toggle()
         XCTAssertTrue(corrector.seen.isEmpty, "empty transcript must not invoke the corrector")
+    }
+
+    // MARK: Glossary relevance filter (B' privacy gate)
+
+    @MainActor
+    func testNoProperNounUtteranceShipsEmptyGlossary() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // The glossary is populated but the utterance names none of its entities.
+        // Nothing private may cross the wire — the enhancer must receive [].
+        let corrector = FakeCorrector([:], glossary: ["gbrain", "Yei", "Sommet"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("the meeting is at noon tomorrow")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [[]],
+                       "no proper noun said ⇒ no private entity disclosed to the cloud")
+    }
+
+    @MainActor
+    func testMisheardNameFuzzyMatchesUnsaidTermsDropped() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // A' does NOT fix it (empty map), so the filter itself must fuzzy-match
+        // the misheard token "gbrand" to glossary "gbrain"; "Yei" is unsaid.
+        let corrector = FakeCorrector([:], glossary: ["gbrain", "Yei"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand today")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [["gbrain"]],
+                       "misheard name fuzzy-matches and is kept; unsaid term filtered out")
+    }
+
+    @MainActor
+    func testCommonWordsDoNotLeakPrivateNames() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // End-to-end leak regression: ordinary English words ("train", "brain")
+        // sit within the fuzzy radius of "gbrain". With A's real-word guard
+        // shared into the filter, they must NOT drag the private name to Groq.
+        let corrector = FakeCorrector([:], glossary: ["gbrain"], realWords: ["train", "my", "brain"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("train my brain")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [[]],
+                       "no entity spoken ⇒ common words near a term must not leak it")
+    }
+
+    @MainActor
+    func testNoCorrectorShipsEmptyGlossary() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // nil corrector ⇒ the glossary source is the `?? []` default; nothing can
+        // reach the cloud regardless of what the utterance says.
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrand today")),
+            enhancer: echo,
+            corrector: nil
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [[]],
+                       "no corrector ⇒ empty glossary, nothing disclosed")
+    }
+
+    @MainActor
+    func testFilterRunsOnTheACorrectedTranscript() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // A direct-map pair whose heard form is far (edit distance > threshold)
+        // from the canonical: only AFTER A' rewrites "zbrn" → "gbrain" does a
+        // token match the term. Locks the invariant that the filter sees the
+        // A'-corrected transcript, not the raw Whisper output (pre-A' "zbrn"
+        // would not match and the term would be wrongly dropped).
+        let corrector = FakeCorrector(["zbrn": "gbrain"], glossary: ["gbrain"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship zbrn today")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [["gbrain"]],
+                       "term reachable only via the A'-corrected token ⇒ filter runs post-A'")
+    }
+
+    @MainActor
+    func testMultipleRelevantTermsSurviveThroughCoordinator() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        // Two names spoken ⇒ both must reach the enhancer through the real call
+        // path, in first-seen order (locks no truncation / reorder in the wiring).
+        let corrector = FakeCorrector([:], glossary: ["gbrain", "Yei"])
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship gbrain and yei now")),
+            enhancer: echo,
+            corrector: corrector
+        )
+        await c.toggle()
+        await c.toggle()
+        let seenGlossary = await echo.seenGlossary
+        XCTAssertEqual(seenGlossary, [["gbrain", "Yei"]],
+                       "both spoken names survive the coordinator path in first-seen order")
+    }
+
+    func testRelevantGlossaryFuzzyExactAndFailClosed() {
+        typealias F = GlossaryRelevanceFilter
+        let words: Set<String> = ["the", "finance", "team", "met", "is", "what", "ox", "ran", "and", "now"]
+        let real: (String) -> Bool = { words.contains($0.lowercased()) }
+        // non-word mishearings fuzzy-match within the length-scaled threshold
+        XCTAssertEqual(F.relevant(transcript: "ship gbrand today", glossary: ["gbrain"], isRealWord: real),
+                       ["gbrain"], "non-word mishearing, distance 2 ≤ threshold(len 6)=2 ⇒ kept")
+        XCTAssertEqual(F.relevant(transcript: "using hermies now", glossary: ["hermes"], isRealWord: real),
+                       ["hermes"], "non-word mishearing, distance 1 ⇒ kept")
+        // exact match kept regardless of length or real-word status
+        XCTAssertEqual(F.relevant(transcript: "ship gbrain now", glossary: ["gbrain"], isRealWord: real),
+                       ["gbrain"], "exact spoken match ⇒ kept")
+        XCTAssertEqual(F.relevant(transcript: "what is ai", glossary: ["AI"], isRealWord: real),
+                       ["AI"], "2-char term spoken exactly ⇒ kept")
+        // far / unrelated term dropped
+        XCTAssertEqual(F.relevant(transcript: "the finance team met", glossary: ["BlackRock"], isRealWord: real),
+                       [], "no token near the term ⇒ dropped (not disclosed)")
+        // 2-char term with no exact token ⇒ threshold floor blocks fuzzy
+        XCTAssertEqual(F.relevant(transcript: "the ox ran", glossary: ["AI"], isRealWord: real),
+                       [], "term under 3 chars floors threshold to 0 ⇒ no fuzzy match")
+        // fail closed
+        XCTAssertEqual(F.relevant(transcript: "", glossary: ["gbrain"], isRealWord: real),
+                       [], "empty transcript fails closed")
+        XCTAssertEqual(F.relevant(transcript: "今天 開會", glossary: ["gbrain", "Yei"], isRealWord: real),
+                       [], "CJK-only utterance (no Latin tokens) fails closed")
+        XCTAssertEqual(F.relevant(transcript: "ship gbrain and yei now", glossary: ["gbrain", "Yei"], isRealWord: real),
+                       ["gbrain", "Yei"], "both names said ⇒ both kept, first-seen order preserved")
+    }
+
+    func testRelevantGlossaryRealWordGuardClosesTheLeak() {
+        // The privacy brake: an ordinary word near a stored name must NOT pull
+        // that name to the cloud (it's probably the common word), but a non-word
+        // mishearing of the SAME name still matches, so recall is preserved.
+        typealias F = GlossaryRelevanceFilter
+        let words: Set<String> = ["read", "the", "sonnet", "i", "work", "at", "train", "my", "brain"]
+        let real: (String) -> Bool = { words.contains($0.lowercased()) }
+        XCTAssertEqual(F.relevant(transcript: "read the sonnet", glossary: ["Sommet"], isRealWord: real),
+                       [], "real word 'sonnet' near 'Sommet' ⇒ dropped, no unspoken entity leaks")
+        XCTAssertEqual(F.relevant(transcript: "i work at sommett", glossary: ["Sommet"], isRealWord: real),
+                       ["Sommet"], "non-word mishearing 'sommett' (distance 1) ⇒ still matched and kept")
+        XCTAssertEqual(F.relevant(transcript: "train my brain", glossary: ["gbrain"], isRealWord: real),
+                       [], "real words 'train'/'brain' near 'gbrain' ⇒ dropped")
+    }
+
+    func testRealWordEntitySpokenExactlyIsKept() {
+        // Recall half of the gate: a glossary term that is itself a real English
+        // word (Bob, Axis, Nous) must STILL be kept when spoken exactly. The
+        // exact-match arm runs BEFORE the real-word guard precisely for this;
+        // reordering them would silently stop disclosing genuinely-named entities
+        // and break C's escape hatch (A' canonicalizes a token → kept by exact).
+        let words: Set<String> = ["call", "bob", "now", "the", "axis", "team", "job", "list"]
+        let real: (String) -> Bool = { words.contains($0.lowercased()) }
+        typealias F = GlossaryRelevanceFilter
+        XCTAssertEqual(F.relevant(transcript: "call Bob now", glossary: ["Bob"], isRealWord: real),
+                       ["Bob"], "real-word entity spoken exactly ⇒ kept (exact precedes the guard)")
+        XCTAssertEqual(F.relevant(transcript: "the axis team", glossary: ["Axis"], isRealWord: real),
+                       ["Axis"], "another real-word entity spoken exactly ⇒ kept")
+        // Contrast: the same class of term as a real-word NEAR-MISS (not the name
+        // spoken) is dropped — 'job' is a real word one edit from 'Bob'.
+        XCTAssertEqual(F.relevant(transcript: "the job list", glossary: ["Bob"], isRealWord: real),
+                       [], "real-word near-miss (the name was not spoken) ⇒ dropped")
+    }
+
+    func testRelevantGlossaryShortTokenDoesNotLeak() {
+        // A short NON-word token must not fuzzy-pull a longer private term: the
+        // tolerance is clamped to the shorter length, so "ye" (2 chars) can't
+        // reach "Yei" (mirrors A's minFuzzyLength floor; closes the iter-2 leak).
+        let real: (String) -> Bool = { _ in false }
+        typealias F = GlossaryRelevanceFilter
+        XCTAssertEqual(F.relevant(transcript: "ye now", glossary: ["Yei"], isRealWord: real),
+                       [], "2-char non-word token ⇒ no fuzzy match to a 3-char term")
+        XCTAssertEqual(F.relevant(transcript: "say yei now", glossary: ["Yei"], isRealWord: real),
+                       ["Yei"], "the 3-char term spoken exactly is still kept")
+    }
+
+    func testRelevantGlossaryCodeMixedRealWordDoesNotLeak() {
+        // Code-mixed dictation is the app's primary use case: a real English word
+        // embedded in a CJK utterance must not leak a private term it sits near.
+        let words: Set<String> = ["brain"]
+        let real: (String) -> Bool = { words.contains($0.lowercased()) }
+        typealias F = GlossaryRelevanceFilter
+        XCTAssertEqual(F.relevant(transcript: "今天 brain 開會", glossary: ["gbrain"], isRealWord: real),
+                       [], "real word 'brain' in a CJK utterance ⇒ 'gbrain' not leaked")
+        XCTAssertEqual(F.relevant(transcript: "今天 gbrain 開會", glossary: ["gbrain"], isRealWord: real),
+                       ["gbrain"], "the name actually said in a CJK utterance ⇒ kept")
     }
 }

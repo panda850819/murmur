@@ -123,7 +123,11 @@ public final class DictationCoordinator: ObservableObject {
                 // whole dictation, even if the property is reassigned mid-flight.
                 let activeCorrector = corrector
                 let corrected = activeCorrector?.correct(rawTranscript) ?? rawTranscript
-                let cleaned = await enhanced(corrected, glossary: activeCorrector?.glossaryTerms ?? [])
+                let cleaned = await enhanced(
+                    corrected,
+                    glossary: activeCorrector?.glossaryTerms ?? [],
+                    isRealWord: activeCorrector?.isRealWord ?? { _ in false }
+                )
                 let text = activeCorrector?.correct(cleaned) ?? cleaned
                 transcript = text
                 if !paster.paste(text) {
@@ -142,13 +146,22 @@ public final class DictationCoordinator: ObservableObject {
     /// Best-effort Groq clean-up. Returns the raw transcript unchanged when
     /// enhance is off, no enhancer is wired, the call throws, or the result is
     /// empty or trips the sanity filter. Enhance never blocks the paste.
-    private func enhanced(_ raw: String, glossary: [String]) async -> String {
+    private func enhanced(_ raw: String, glossary: [String], isRealWord: (String) -> Bool) async -> String {
         guard enhanceEnabled, let enhancer else { return raw }
         // B': the LLM gets murmur's proper-noun glossary (passed in from the
         // caller's captured corrector so A' and B' share one source this
-        // dictation). Empty ⇒ the enhancer falls back to the base prompt.
+        // dictation), narrowed to only the terms actually named in THIS utterance
+        // so entities the speaker never said are never disclosed to the cloud
+        // (pre-M6 privacy gate). `raw` is already the A'-corrected transcript,
+        // the right match target; `isRealWord` is A's own guard, reused so the
+        // filter agrees with A' on which tokens are ordinary words. An empty
+        // result ⇒ the enhancer falls back to the base prompt, byte-identical to
+        // no-glossary.
+        let relevant = GlossaryRelevanceFilter.relevant(
+            transcript: raw, glossary: glossary, isRealWord: isRealWord
+        )
         do {
-            let result = try await enhancer.enhance(raw, glossary: glossary)
+            let result = try await enhancer.enhance(raw, glossary: relevant)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !result.isEmpty, SanityFilter.isClean(result) else { return raw }
             return result
