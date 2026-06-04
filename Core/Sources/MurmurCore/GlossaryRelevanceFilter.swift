@@ -49,12 +49,16 @@ import Foundation
 enum GlossaryRelevanceFilter {
     /// The subset of `glossary` whose terms are present in `transcript` (exact)
     /// or a non-real-word fuzzy near-miss of some Latin token, preserving the
-    /// glossary's first-seen order. `isRealWord` should be the SAME guard A' was
-    /// built with so the layers stay consistent.
+    /// glossary's first-seen order. `isRealWord` is required (no default) so a
+    /// caller must consciously supply A's guard: the production default
+    /// `SystemDictionary.isRealWord` reaches main-thread-only `NSSpellChecker`,
+    /// and a hidden default would let an off-main caller trip it. The shipping
+    /// path passes the corrector's own `isRealWord`, keeping A' and the filter
+    /// sourced from one guard.
     static func relevant(
         transcript: String,
         glossary: [String],
-        isRealWord: (String) -> Bool = SystemDictionary.isRealWord
+        isRealWord: (String) -> Bool
     ) -> [String] {
         let tokens = CorrectionStore.latinTokens(in: transcript)
         guard !tokens.isEmpty else { return [] }   // fail closed: no Latin tokens
