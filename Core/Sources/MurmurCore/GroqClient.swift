@@ -90,8 +90,10 @@ public actor GroqClient {
     /// A' still re-asserts the names deterministically after enhance, so B's
     /// distinct value is segmentation and code-mix handling that uses the
     /// proper-noun vocabulary as context. Empty glossary ⇒ the base prompt
-    /// verbatim, identical to pre-B' behavior. The full list is injected;
-    /// relevance filtering is deferred until the term set is large (see brief).
+    /// verbatim, identical to pre-B' behavior. The caller (DictationCoordinator)
+    /// narrows the list to terms relevant to the utterance before this point
+    /// (`GlossaryRelevanceFilter`, the pre-M6 privacy gate); this formatter takes
+    /// whatever subset it is given and sanitizes each entry.
     static func cleanupSystemPrompt(glossary: [String]) -> String {
         let names = glossary
             .map(sanitizeGlossaryEntry)
