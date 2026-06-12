@@ -91,6 +91,41 @@ private final class FakeCorrector: TextCorrecting {
     }
 }
 
+/// Test double for the M3a chat seam. Records every translate/answer call so
+/// a test can assert what crossed it (target language, narrowed glossary,
+/// selection). An `actor` for the same reason as `EchoEnhancer`.
+private actor FakeChatter: LLMChatting {
+    enum Outcome: Sendable { case text(String), fail }
+    private let outcome: Outcome
+    private(set) var translations: [(text: String, language: String, glossary: [String])] = []
+    private(set) var questions: [(question: String, selection: String?)] = []
+
+    init(_ outcome: Outcome) { self.outcome = outcome }
+
+    func translate(_ text: String, to targetLanguage: String, glossary: [String]) async throws -> String {
+        translations.append((text, targetLanguage, glossary))
+        switch outcome {
+        case .text(let s): return s
+        case .fail: throw FakeErr.boom
+        }
+    }
+
+    func answer(_ question: String, about selection: String?) async throws -> String {
+        questions.append((question, selection))
+        switch outcome {
+        case .text(let s): return s
+        case .fail: throw FakeErr.boom
+        }
+    }
+}
+
+@MainActor
+private final class FakeSelection: SelectionReading {
+    var selection: String?
+    init(_ selection: String? = nil) { self.selection = selection }
+    func selectedText() -> String? { selection }
+}
+
 /// Suspends in `transcribe` until `release()`; `waitUntilEntered()` lets the
 /// test deterministically observe the `.transcribing` phase.
 private actor GateEngine: Transcribing {
@@ -130,6 +165,7 @@ final class DictationCoordinatorTests: XCTestCase {
         engine: any Transcribing,
         paster: FakePaster? = nil,
         enhancer: (any LLMEnhancing)? = nil,
+        chatter: (any LLMChatting)? = nil,
         corrector: (any TextCorrecting)? = nil
     ) -> DictationCoordinator {
         DictationCoordinator(
@@ -137,6 +173,7 @@ final class DictationCoordinatorTests: XCTestCase {
             transcriber: Transcriber(engine: engine),
             paster: paster ?? FakePaster(),
             enhancer: enhancer,
+            chatter: chatter,
             corrector: corrector
         )
     }
@@ -805,6 +842,151 @@ final class DictationCoordinatorTests: XCTestCase {
                        [], "2-char non-word token ⇒ no fuzzy match to a 3-char term")
         XCTAssertEqual(F.relevant(transcript: "say yei now", glossary: ["Yei"], isRealWord: real),
                        ["Yei"], "the 3-char term spoken exactly is still kept")
+    }
+
+    // MARK: M3a translate / ask modes
+
+    @MainActor
+    func testTranslateModePastesTranslationWithTargetLanguage() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let chatter = FakeChatter(.text("translated text"))
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("原文")),
+            paster: paster, chatter: chatter
+        )
+        c.targetLanguage = "日本語"
+        await c.toggle(mode: .translate)
+        await c.toggle(mode: .translate)
+        XCTAssertEqual(paster.pasted, ["translated text"])
+        XCTAssertEqual(c.transcript, "translated text")
+        XCTAssertNil(c.errorMessage)
+        let calls = await chatter.translations
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.text, "原文")
+        XCTAssertEqual(calls.first?.language, "日本語")
+    }
+
+    @MainActor
+    func testTranslateGlossaryNarrowedToUtterance() async {
+        // Same B' privacy gate as enhance: only the term actually spoken
+        // crosses to the cloud with a translate call.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let chatter = FakeChatter(.text("ok"))
+        let corrector = FakeCorrector([:], glossary: ["Yei", "Swingvy"])
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("deploy Yei tomorrow")),
+            chatter: chatter, corrector: corrector
+        )
+        await c.toggle(mode: .translate)
+        await c.toggle(mode: .translate)
+        let calls = await chatter.translations
+        XCTAssertEqual(calls.first?.glossary, ["Yei"], "unsaid Swingvy must not ride along")
+    }
+
+    @MainActor
+    func testTranslateFailureDegradesToRawTranscriptWithError() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("原文")),
+            paster: paster, chatter: FakeChatter(.fail)
+        )
+        await c.toggle(mode: .translate)
+        await c.toggle(mode: .translate)
+        XCTAssertEqual(paster.pasted, ["原文"], "the user's words still land, untranslated")
+        XCTAssertEqual(c.errorMessage, "Translation failed — pasted the raw transcript.")
+    }
+
+    @MainActor
+    func testTranslateUnsaneResultDegradesToRawTranscript() async {
+        // SanityFilter guards translate output like it guards enhance.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("原文")),
+            paster: paster, chatter: FakeChatter(.text("bad 🤖 output"))
+        )
+        await c.toggle(mode: .translate)
+        await c.toggle(mode: .translate)
+        XCTAssertEqual(paster.pasted, ["原文"])
+        XCTAssertEqual(c.errorMessage, "Translation came back malformed — pasted the raw transcript.")
+    }
+
+    @MainActor
+    func testAskModePastesAnswerBuiltOnSelection() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let chatter = FakeChatter(.text("the answer"))
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("這段在說什麼")),
+            paster: paster, chatter: chatter
+        )
+        c.selectionReader = FakeSelection("selected paragraph")
+        await c.toggle(mode: .ask)
+        await c.toggle(mode: .ask)
+        XCTAssertEqual(paster.pasted, ["the answer"])
+        XCTAssertEqual(c.transcript, "the answer")
+        let calls = await chatter.questions
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.question, "這段在說什麼")
+        XCTAssertEqual(calls.first?.selection, "selected paragraph")
+    }
+
+    @MainActor
+    func testAskWithoutSelectionPassesNil() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let chatter = FakeChatter(.text("the answer"))
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("what is murmur")),
+            chatter: chatter
+        )
+        await c.toggle(mode: .ask)
+        await c.toggle(mode: .ask)
+        let calls = await chatter.questions
+        XCTAssertEqual(calls.first?.selection, nil)
+    }
+
+    @MainActor
+    func testAskFailurePastesNothingShowsQuestion() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("這段在說什麼")),
+            paster: paster, chatter: FakeChatter(.fail)
+        )
+        await c.toggle(mode: .ask)
+        await c.toggle(mode: .ask)
+        XCTAssertTrue(paster.pasted.isEmpty, "an answer didn't happen — paste nothing")
+        XCTAssertEqual(c.transcript, "這段在說什麼")
+        XCTAssertEqual(c.errorMessage, "Ask failed — check the network and try again.")
+    }
+
+    @MainActor
+    func testDictateModeIsTheDefaultAndUnchanged() async {
+        // toggle() with no argument is the M1 path — chatter present but idle.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let chatter = FakeChatter(.text("MUST NOT APPEAR"))
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("hello")),
+            paster: paster, chatter: chatter
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(paster.pasted, ["hello"])
+        let translations = await chatter.translations
+        let questions = await chatter.questions
+        XCTAssertTrue(translations.isEmpty)
+        XCTAssertTrue(questions.isEmpty)
     }
 
     func testRelevantGlossaryCodeMixedRealWordDoesNotLeak() {

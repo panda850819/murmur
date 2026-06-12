@@ -33,10 +33,15 @@ public final class DictationCoordinator: ObservableObject {
     /// effect when an `enhancer` is wired; see `canEnhance`.
     @Published public var enhanceEnabled: Bool = true
 
+    /// 翻譯 mode's output language (M3a). Settable so the SwiftUI layer can
+    /// bind it to the target-language Picker.
+    @Published public var targetLanguage: String = "English (US)"
+
     private let recorder: any Recording
     private let transcriber: Transcriber
     private let paster: any Pasting
     private let enhancer: (any LLMEnhancing)?
+    private let chatter: (any LLMChatting)?
 
     /// On-device proper-noun correction (A'). Applied to the raw transcript
     /// before enhance/paste. Settable so the SwiftUI layer can inject the shared
@@ -44,21 +49,32 @@ public final class DictationCoordinator: ObservableObject {
     /// transcript passes through uncorrected.
     public var corrector: (any TextCorrecting)?
 
+    /// Ask-mode's view of "what's selected right now". Settable so the app
+    /// layer can inject the AX-backed reader. `nil` → questions are answered
+    /// without reference text.
+    public var selectionReader: (any SelectionReading)?
+
     /// True when an LLM enhancer is wired (i.e. a Groq key was present). The UI
     /// hides the clean-up toggle when this is false.
     public var canEnhance: Bool { enhancer != nil }
+
+    /// True when translate/ask are wired (same Groq-key signal as `canEnhance`,
+    /// but through the chat seam). The UI dims the chord hints when false.
+    public var canChat: Bool { chatter != nil }
 
     public init(
         recorder: any Recording,
         transcriber: Transcriber,
         paster: any Pasting,
         enhancer: (any LLMEnhancing)? = nil,
+        chatter: (any LLMChatting)? = nil,
         corrector: (any TextCorrecting)? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.paster = paster
         self.enhancer = enhancer
+        self.chatter = chatter
         self.corrector = corrector
     }
 
@@ -68,20 +84,24 @@ public final class DictationCoordinator: ObservableObject {
         #else
         let paster: any Pasting = NoopPaster()
         #endif
-        let enhancer: (any LLMEnhancing)? = GroqConfig.fromEnvironment().map {
-            GroqClient(config: $0)
-        }
+        // One client behind both seams so enhance and translate/ask share the
+        // connection config (and a future self-hosted swap is one edit).
+        let groq = GroqConfig.fromEnvironment().map { GroqClient(config: $0) }
         return DictationCoordinator(
             recorder: AudioRecorder(),
             transcriber: .makeDefault(),
             paster: paster,
-            enhancer: enhancer
+            enhancer: groq,
+            chatter: groq
         )
     }
 
-    /// Idle → start recording. Recording → stop, then transcribe the WAV.
+    /// Idle → start recording. Recording → stop, then transcribe the WAV and
+    /// run the `mode` flow (dictate / translate / ask) on the transcript.
+    /// `mode` only matters on the stopping call — the chord is resolved by the
+    /// hotkey monitor at release (a mid-hold `/` upgrades dictate → ask).
     /// Taps during transcription are ignored.
-    public func toggle() async {
+    public func toggle(mode: DictationMode = .dictate) async {
         switch phase {
         case .transcribing:
             return
@@ -123,18 +143,36 @@ public final class DictationCoordinator: ObservableObject {
                 // whole dictation, even if the property is reassigned mid-flight.
                 let activeCorrector = corrector
                 let corrected = activeCorrector?.correct(rawTranscript) ?? rawTranscript
-                let cleaned = await enhanced(
-                    corrected,
-                    glossary: activeCorrector?.glossaryTerms ?? [],
-                    isRealWord: activeCorrector?.isRealWord ?? { _ in false }
-                )
-                let text = activeCorrector?.correct(cleaned) ?? cleaned
-                transcript = text
-                if !paster.paste(text) {
-                    errorMessage = "Couldn't auto-paste. Enable Accessibility for "
-                        + "Murmur: System Settings ▸ Privacy & Security ▸ "
-                        + "Accessibility. (Transcript is on the clipboard — ⌘V "
-                        + "to paste manually.)"
+                let output: String?
+                switch mode {
+                case .dictate:
+                    let cleaned = await enhanced(
+                        corrected,
+                        glossary: activeCorrector?.glossaryTerms ?? [],
+                        isRealWord: activeCorrector?.isRealWord ?? { _ in false }
+                    )
+                    output = activeCorrector?.correct(cleaned) ?? cleaned
+                case .translate:
+                    output = await translated(
+                        corrected,
+                        glossary: activeCorrector?.glossaryTerms ?? [],
+                        isRealWord: activeCorrector?.isRealWord ?? { _ in false }
+                    )
+                case .ask:
+                    output = await answered(corrected)
+                }
+                if let text = output {
+                    transcript = text
+                    if !paster.paste(text) {
+                        errorMessage = "Couldn't auto-paste. Enable Accessibility for "
+                            + "Murmur: System Settings ▸ Privacy & Security ▸ "
+                            + "Accessibility. (Transcript is on the clipboard — ⌘V "
+                            + "to paste manually.)"
+                    }
+                } else {
+                    // Ask failed — show the question, paste nothing (an answer
+                    // didn't happen; the question is not a substitute).
+                    transcript = corrected
                 }
             } else {
                 transcript = transcriber.transcript
@@ -167,6 +205,57 @@ public final class DictationCoordinator: ObservableObject {
             return result
         } catch {
             return raw
+        }
+    }
+
+    /// 翻譯 mode. Degrades to the (A'-corrected) source transcript when no
+    /// chatter is wired, the call throws, or the result is empty/unsane —
+    /// the user's words still land in the document, with an error note saying
+    /// they landed untranslated. Never returns nil: translate always pastes.
+    private func translated(_ source: String, glossary: [String], isRealWord: (String) -> Bool) async -> String {
+        guard let chatter else {
+            errorMessage = "Translate needs a Groq key (GROQ_API_KEY). Pasted the raw transcript."
+            return source
+        }
+        // Same B' privacy gate as enhance: only utterance-relevant proper
+        // nouns ride along to keep their spellings across the language hop.
+        let relevant = GlossaryRelevanceFilter.relevant(
+            transcript: source, glossary: glossary, isRealWord: isRealWord
+        )
+        do {
+            let result = try await chatter.translate(source, to: targetLanguage, glossary: relevant)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !result.isEmpty, SanityFilter.isClean(result) else {
+                errorMessage = "Translation came back malformed — pasted the raw transcript."
+                return source
+            }
+            return result
+        } catch {
+            errorMessage = "Translation failed — pasted the raw transcript."
+            return source
+        }
+    }
+
+    /// 詢問 mode. Returns the answer to paste, or nil on failure — unlike
+    /// translate there is no useful degraded output (pasting the question
+    /// where an answer was expected is worse than pasting nothing).
+    private func answered(_ question: String) async -> String? {
+        guard let chatter else {
+            errorMessage = "Ask needs a Groq key (GROQ_API_KEY)."
+            return nil
+        }
+        let selection = selectionReader?.selectedText()
+        do {
+            let result = try await chatter.answer(question, about: selection)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !result.isEmpty, SanityFilter.isClean(result) else {
+                errorMessage = "Answer came back malformed."
+                return nil
+            }
+            return result
+        } catch {
+            errorMessage = "Ask failed — check the network and try again."
+            return nil
         }
     }
 

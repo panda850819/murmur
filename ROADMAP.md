@@ -131,12 +131,12 @@ Typeless macOS hotkey map: 口述 = Right Cmd · 翻譯 = Right Shift+Right Cmd 
 | Feature | Status | Notes |
 |---|---|---|
 | 口述 dictate + auto-cleanup | ✅ | M1: record→transcribe→enhance→paste. Typeless's "um 7am→3pm" demo = our enhance |
-| **翻譯 mode** (speak → insert target-lang) | 🔲 | new hotkey chord + `GroqClient.chat` translate prompt + target-lang setting |
-| **詢問 mode** (ask about selected text) | 🔲 | new hotkey + read selection via Accessibility + `GroqClient.chat` |
-| Target-language setting | 🔲 | one Picker; default 英語(美國) |
+| **翻譯 mode** (speak → insert target-lang) | ✅ | Right⇧+Right⌘ hold; `GroqClient.translate` + B' relevance filter; degrades to raw transcript on failure. Real-key smoke pending |
+| **詢問 mode** (ask about selected text) | ✅ | `/` during Right⌘ hold (tap swallows the keystroke); AX selection (8k cap) rides as reference text. Real-key smoke pending |
+| Target-language setting | ✅ | Picker in main window, `@AppStorage`, default English (US) |
 | Web-search in 詢問 (stretch) | 🔲 | Typeless "Searching the web"; beyond Groq chat, defer |
 
-`▰▱▱▱▱` ~20% (dictate+enhance done; translate/ask reuse the M1 client)
+`▰▰▰▰▱` ~80% (built + unit-tested; real-key + real-audio smoke pending Panda; web-search stretch deferred)
 
 ### M3b — iOS keyboard UX (arch settled; gated on device measurement only)
 

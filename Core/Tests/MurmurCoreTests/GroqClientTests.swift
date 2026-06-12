@@ -135,6 +135,46 @@ final class GroqClientTests: XCTestCase {
         XCTAssertEqual(GroqClient.sanitizeGlossaryEntry("gbrain"), "gbrain")
     }
 
+    // MARK: M3a translate / ask prompts
+
+    func testTranslatePromptNamesTargetLanguage() {
+        let p = GroqClient.translateSystemPrompt(targetLanguage: "日本語", glossary: [])
+        XCTAssertTrue(p.contains("into 日本語"))
+        XCTAssertFalse(p.contains("Known proper nouns"), "no glossary clause when empty")
+    }
+
+    func testTranslatePromptSanitizesLanguageAndFallsBackWhenHostile() {
+        // "English (US)" → parens stripped by the shared sanitizer, language survives.
+        let p = GroqClient.translateSystemPrompt(targetLanguage: "English (US)", glossary: [])
+        XCTAssertTrue(p.contains("into English US"))
+        // A garbage language string sanitizes to empty → English fallback.
+        let hostile = GroqClient.translateSystemPrompt(targetLanguage: "\n!!!\n", glossary: [])
+        XCTAssertTrue(hostile.contains("into English."))
+        XCTAssertFalse(hostile.contains("!!!"))
+    }
+
+    func testTranslatePromptInjectsGlossaryNames() {
+        let p = GroqClient.translateSystemPrompt(targetLanguage: "繁體中文", glossary: ["Yei", "gbrain"])
+        XCTAssertTrue(p.contains("Known proper nouns"))
+        XCTAssertTrue(p.contains("Yei, gbrain"))
+    }
+
+    func testAskUserMessageWithAndWithoutSelection() {
+        XCTAssertEqual(
+            GroqClient.askUserMessage(question: "what is this", selection: nil),
+            "what is this"
+        )
+        let withRef = GroqClient.askUserMessage(question: "summarize", selection: "some doc text")
+        XCTAssertTrue(withRef.contains("Reference text:\nsome doc text"))
+        XCTAssertTrue(withRef.hasSuffix("Question: summarize"))
+    }
+
+    func testAskUserMessageCapsSelectionLength() {
+        let huge = String(repeating: "a", count: GroqClient.askSelectionLimit + 500)
+        let msg = GroqClient.askUserMessage(question: "q", selection: huge)
+        XCTAssertLessThan(msg.count, GroqClient.askSelectionLimit + 100)
+    }
+
     // MARK: HTTP error mapping
 
     func testThrowIfHTTPErrorOnNon2xx() {

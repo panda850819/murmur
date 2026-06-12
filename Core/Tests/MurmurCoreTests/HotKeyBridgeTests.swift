@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 private final class FakeHotKeyMonitor: HotKeyMonitoring {
     var onPress: (() -> Void)?
-    var onRelease: ((_ cancelled: Bool) -> Void)?
+    var onRelease: ((_ cancelled: Bool, _ mode: DictationMode) -> Void)?
     var startReturn = true
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -15,7 +15,9 @@ private final class FakeHotKeyMonitor: HotKeyMonitoring {
 
     // Test drivers — invoke what the real CGEvent tap would call.
     func firePress() { onPress?() }
-    func fireRelease(cancelled: Bool) { onRelease?(cancelled) }
+    func fireRelease(cancelled: Bool, mode: DictationMode = .dictate) {
+        onRelease?(cancelled, mode)
+    }
 }
 
 private final class FakeProbe: PermissionProbe {
@@ -126,6 +128,28 @@ final class HotKeyBridgeTests: XCTestCase {
         XCTAssertEqual(coordinator.phase, .idle)
         XCTAssertNil(coordinator.transcript)
         XCTAssertTrue(paster.pasted.isEmpty)
+    }
+
+    @MainActor
+    func testReleaseModeReachesCoordinator() async {
+        // No chatter wired → a translate release degrades to pasting the raw
+        // transcript with the Groq-key hint. That hint proves the mode rode
+        // the bridge into the coordinator (a dictate release sets no error).
+        let mon = FakeHotKeyMonitor()
+        let paster = Pst()
+        let coordinator = makeCoordinator(paster)
+        let bridge = HotKeyBridge(monitor: mon, probe: FakeProbe(ax: true, im: true))
+        bridge.attach(to: coordinator)
+
+        mon.firePress()
+        await bridge._waitForPending()
+        mon.fireRelease(cancelled: false, mode: .translate)
+        await bridge._waitForPending()
+        XCTAssertEqual(paster.pasted, ["ok"])
+        XCTAssertEqual(
+            coordinator.errorMessage,
+            "Translate needs a Groq key (GROQ_API_KEY). Pasted the raw transcript."
+        )
     }
 
     @MainActor

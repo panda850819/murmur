@@ -45,6 +45,13 @@ struct ContentView: View {
     @State private var heardText = ""
     @State private var intendedText = ""
 
+    /// 翻譯 mode's output language. Persisted here (UI concern) and pushed
+    /// into the coordinator, which is AppKit/SwiftUI-free.
+    @AppStorage("targetLanguage") private var targetLanguage = "English (US)"
+    private static let targetLanguages = [
+        "English (US)", "繁體中文", "日本語", "한국어", "Español", "Français", "Deutsch",
+    ]
+
     var body: some View {
         VStack(spacing: 16) {
             Text("Murmur")
@@ -64,15 +71,32 @@ struct ContentView: View {
             .keyboardShortcut(.return, modifiers: [])
             .disabled(dictation.phase == .transcribing)
 
-            Text("Hold Right ⌘ anywhere to dictate")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            VStack(spacing: 2) {
+                Text("Hold Right ⌘ anywhere to dictate")
+                if dictation.canChat {
+                    Text("+ Right ⇧ to translate · tap / while holding to ask")
+                }
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
 
             if dictation.canEnhance {
                 Toggle("Clean up with AI", isOn: $dictation.enhanceEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .fixedSize()
+            }
+
+            if dictation.canChat {
+                Picker("Translate to", selection: $targetLanguage) {
+                    ForEach(Self.targetLanguages, id: \.self) { Text($0) }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .fixedSize()
+                .onChange(of: targetLanguage) { _, newValue in
+                    dictation.targetLanguage = newValue
+                }
             }
 
             if !hotkey.allPermissionsGranted {
@@ -145,6 +169,8 @@ struct ContentView: View {
         .onAppear {
             hotkey.attach(to: dictation)
             dictation.corrector = corrections
+            dictation.selectionReader = AXSelectionReader()
+            dictation.targetLanguage = targetLanguage
         }
     }
 

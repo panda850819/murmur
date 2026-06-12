@@ -11,7 +11,9 @@ import IOKit.hid
 @MainActor
 public protocol HotKeyMonitoring: AnyObject {
     var onPress: (() -> Void)? { get set }
-    var onRelease: ((_ cancelled: Bool) -> Void)? { get set }
+    /// `mode` is the chord resolved over the whole hold (Right⇧ seen → 翻譯,
+    /// `/` seen → 詢問); only meaningful when `cancelled` is false.
+    var onRelease: ((_ cancelled: Bool, _ mode: DictationMode) -> Void)? { get set }
     @discardableResult
     func start() -> Bool
     func stop()
@@ -68,12 +70,12 @@ public final class HotKeyBridge: ObservableObject {
         monitor.onPress = { [weak self] in
             self?.enqueue { await dictation.toggle() }
         }
-        monitor.onRelease = { [weak self] cancelled in
+        monitor.onRelease = { [weak self] cancelled, mode in
             self?.enqueue {
                 if cancelled {
                     await dictation.cancel()
                 } else {
-                    await dictation.toggle()
+                    await dictation.toggle(mode: mode)
                 }
             }
         }
