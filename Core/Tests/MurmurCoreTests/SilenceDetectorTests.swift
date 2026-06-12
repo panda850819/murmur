@@ -62,23 +62,30 @@ final class SilenceDetectorTests: XCTestCase {
     }
 
     func testZeroFrameFileIsSilent() throws {
+        // Fully decoded with zero samples: an empty recording IS silence —
+        // unlike the unreadable cases below, nothing here was unverifiable.
         let url = try WAVWriter.write(
             samples: [],
             at: dir.appendingPathComponent("empty.wav")
         )
-        XCTAssertTrue(SilenceDetector.isSilent(wavURL: url), "zero frames ⇒ silent (fail closed)")
+        XCTAssertTrue(SilenceDetector.isSilent(wavURL: url), "zero frames, fully decoded ⇒ silent")
     }
 
-    func testUnreadableFileIsSilent() {
+    func testUnreadableFileIsNotSilent() {
+        // "True" is reserved for verified silence. A file we can't even open
+        // must NOT be called silent — that verdict would silently drop a real
+        // dictation; the transcriber gets to fail loudly instead.
         let missing = dir.appendingPathComponent("does-not-exist.wav")
-        XCTAssertTrue(SilenceDetector.isSilent(wavURL: missing), "unreadable ⇒ silent (fail closed)")
+        XCTAssertFalse(SilenceDetector.isSilent(wavURL: missing),
+                       "unreadable ⇒ not silent; let the transcriber surface the error")
     }
 
-    func testGarbageFileIsSilent() throws {
-        // Not a RIFF file at all — AVAudioFile refuses it; must fail closed.
+    func testGarbageFileIsNotSilent() throws {
+        // Not a RIFF file at all — AVAudioFile refuses it. Same contract as
+        // the missing file: undecodable ⇒ no silence claim.
         let url = dir.appendingPathComponent("garbage.wav")
         try Data("not a wav".utf8).write(to: url)
-        XCTAssertTrue(SilenceDetector.isSilent(wavURL: url))
+        XCTAssertFalse(SilenceDetector.isSilent(wavURL: url))
     }
 
     func testLongClipSpansMultipleReadChunks() throws {

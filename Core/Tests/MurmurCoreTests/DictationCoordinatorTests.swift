@@ -1165,6 +1165,29 @@ final class DictationCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testPasteFailureDoesNotAppendHistory() async {
+        // History records what actually landed in the document. A refused
+        // paste means nothing landed — appending would claim text the
+        // document never received. The Accessibility hint must still show.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let paster = FakePaster()
+        paster.succeeds = false
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("hi")),
+            paster: paster
+        )
+        c.history = history
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(history.records.isEmpty, "refused paste ⇒ nothing recorded")
+        XCTAssertTrue(c.errorMessage?.contains("Accessibility") == true,
+                      "the paste-failure hint must survive the restructure")
+    }
+
+    @MainActor
     func testSilentStopDoesNotAppendHistory() async {
         let rec = FakeRecorder()
         rec.stopURL = wav

@@ -109,7 +109,7 @@ public final class HistoryStore: ObservableObject {
                     inToken = false
                 }
                 count += 1
-            } else if ch.isWhitespace || ch.isNewline {
+            } else if isCJKSeparator(ch) || ch.isWhitespace || ch.isNewline {
                 if inToken {
                     count += 1
                     inToken = false
@@ -120,6 +120,23 @@ public final class HistoryStore: ObservableObject {
         }
         if inToken { count += 1 }
         return count
+    }
+
+    /// CJK punctuation (U+3000–303F: 。、「」…) and fullwidth forms
+    /// (U+FF00–FFEF: ，！？ and fullwidth ASCII). These are separators, not
+    /// words: "今天開會。" is 4 words, and treating ，/。 as token characters
+    /// would also glue them onto a Latin run and inflate code-mixed counts.
+    /// They terminate any open token and count nothing themselves —
+    /// mirroring how `isWhitespace` is handled above.
+    nonisolated private static func isCJKSeparator(_ ch: Character) -> Bool {
+        guard let scalar = ch.unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x3000...0x303F,    // CJK Symbols and Punctuation
+             0xFF00...0xFFEF:    // Halfwidth and Fullwidth Forms
+            return true
+        default:
+            return false
+        }
     }
 
     /// Han (incl. Extension A + compatibility), Hiragana, Katakana, and

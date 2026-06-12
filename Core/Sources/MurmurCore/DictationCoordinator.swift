@@ -184,15 +184,19 @@ public final class DictationCoordinator: ObservableObject {
                 }
                 if let text = output {
                     transcript = text
-                    // M5 history: record what actually landed in the document
-                    // — the paste-worthy output, not the raw transcript. A
-                    // degraded-but-pasted output (translate falling back to
-                    // the source text) still counts: it IS what the user got.
-                    // Ask-failure (output nil), transcribe errors, the silent
-                    // guard, and cancel all bail before this line, so
-                    // failures never pollute the history.
-                    history?.append(mode: mode, text: text)
-                    if !paster.paste(text) {
+                    let pasted = paster.paste(text)
+                    if pasted {
+                        // M5 history: record what actually landed in the
+                        // document — appended only AFTER the paste reported
+                        // success, so history never claims text the document
+                        // never received. A degraded-but-pasted output
+                        // (translate falling back to the source text) still
+                        // counts: it IS what the user got. Ask-failure
+                        // (output nil), transcribe errors, the silent guard,
+                        // cancel, and a refused paste all miss this branch,
+                        // so failures never pollute the history.
+                        history?.append(mode: mode, text: text)
+                    } else {
                         let pasteHint = "Couldn't auto-paste. Enable Accessibility for "
                             + "Murmur: System Settings ▸ Privacy & Security ▸ "
                             + "Accessibility. (Transcript is on the clipboard — ⌘V "

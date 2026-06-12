@@ -111,6 +111,15 @@ final class HistoryStoreTests: XCTestCase {
                        "a CJK char terminates an abutting Latin token: 用 + gbrain + 開 + 會")
     }
 
+    func testWordCountCJKPunctuationIsASeparator() {
+        // CJK punctuation and fullwidth forms are separators, never tokens —
+        // counting "。" as a word would inflate every Chinese sentence by one.
+        XCTAssertEqual(HistoryStore.wordCount(of: "今天開會。"), 4,
+                       "ideographic full stop must not count as a word")
+        XCTAssertEqual(HistoryStore.wordCount(of: "跟 Bob 開會，下午三點"), 8,
+                       "跟/Bob/開/會/下/午/三/點 — fullwidth comma separates, counts nothing")
+    }
+
     func testWordCountPunctuationRidesItsToken() {
         // Punctuation is not whitespace and not CJK, so it rides the adjacent
         // token — matching how whitespace splitting treats "minutes."

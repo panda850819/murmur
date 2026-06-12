@@ -226,9 +226,12 @@ struct ContentView: View {
 
             // M5 stats: derived live from the same records the list shows,
             // so the numbers can never disagree with the visible history.
+            // "(last 200)" because the store caps at `HistoryStore.capacity`
+            // — these are rolling-window numbers, not lifetime totals, and
+            // the copy must not promise more than the data covers.
             let stats = history.stats
             Text("\(stats.dictations) dictations · \(stats.words) words · "
-                + "~\(String(format: "%.0f", stats.estMinutesSaved)) min saved")
+                + "~\(String(format: "%.0f", stats.estMinutesSaved)) min saved (last 200)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
