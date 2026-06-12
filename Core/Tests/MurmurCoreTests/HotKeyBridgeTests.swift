@@ -84,12 +84,15 @@ final class HotKeyBridgeTests: XCTestCase {
     }
 
     @MainActor
-    func testInputMonitoringFalseWhenTapCreationFails() {
+    func testAccessibilityFalseWhenTapCreationFails() {
+        // An active (.defaultTap) tap is gated on Accessibility, so a failed
+        // start() points the permission UI at the Accessibility row.
         let mon = FakeHotKeyMonitor()
         mon.startReturn = false
         let bridge = HotKeyBridge(monitor: mon, probe: FakeProbe(ax: true, im: true))
         bridge.attach(to: makeCoordinator(Pst()))
-        XCTAssertFalse(bridge.inputMonitoringGranted, "im && started — started=false")
+        XCTAssertFalse(bridge.accessibilityGranted, "ax && started — started=false")
+        XCTAssertTrue(bridge.inputMonitoringGranted)
     }
 
     @MainActor

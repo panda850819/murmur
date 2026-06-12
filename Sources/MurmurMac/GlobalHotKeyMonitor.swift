@@ -59,28 +59,24 @@ final class GlobalHotKeyMonitor: HotKeyMonitoring {
     /// synchronised, not just silenced.
     private let portBox = OSAllocatedUnfairLock<CFMachPort?>(initialState: nil)
 
-    /// Swallow bookkeeping read/written on the tap's delivery thread (the
-    /// swallow verdict must be synchronous — by the time the main actor sees
-    /// the event, returning nil is no longer possible). `holdActive` is
-    /// updated right in `handle()` from the Right⌘ flagsChanged stream, so it
-    /// is ordered with the very events it gates. `slashDown` pairs the
-    /// swallowed `/` keyDown with its keyUp even if the hold ends in between.
-    private struct TapThreadState {
-        var holdActive = false
-        var slashDown = false
-    }
-    private let tapState = OSAllocatedUnfairLock(initialState: TapThreadState())
+    /// Pairs a swallowed `/` keyDown with its keyUp (so the up is eaten even
+    /// if Right⌘ was released in between — an orphan keyUp confuses apps).
+    /// The down itself needs no held state: the keyDown event carries the
+    /// current modifier flags, so the verdict reads Right⌘ off the very event
+    /// it gates — no missed-flagsChanged hazard can wedge it. Lock-guarded
+    /// because it lives on the tap thread while `stop()` resets it from main.
+    private let slashDownBox = OSAllocatedUnfairLock(initialState: false)
 
     private var active = false
     private var otherKeyDuringHold = false
     private var mode: DictationMode = .dictate
     private var pressedAt: TimeInterval = 0
 
-    /// Installs the tap. Returns `false` if it could not be created. Note a
-    /// listen-only tap is created even WITHOUT Input Monitoring — it just
-    /// won't see other apps' events — so a `true` here is necessary but not
-    /// sufficient; `HotKeyBridge` gates on `PermissionProbe` for the real
-    /// signal.
+    /// Installs the tap. Returns `false` if it could not be created. An
+    /// ACTIVE (`.defaultTap`) keyboard tap requires Accessibility trust —
+    /// `tapCreate` returns nil without it — so a `false` here points at the
+    /// Accessibility grant, not Input Monitoring; `HotKeyBridge` attributes
+    /// it accordingly.
     @discardableResult
     func start() -> Bool {
         guard tap == nil else { return true }
@@ -125,13 +121,30 @@ final class GlobalHotKeyMonitor: HotKeyMonitoring {
             return false
         }
 
-        let runLoop = CFRunLoopGetCurrent()
+        // The tap gets its own thread + run loop. A `.defaultTap` is
+        // SYNCHRONOUS — WindowServer holds every keyboard event in the
+        // session until this callback returns — so parking it on the main
+        // run loop would turn any Murmur main-thread hitch (SwiftUI layout,
+        // an AX call) into system-wide typing latency. The callback itself
+        // stays trivially cheap: read flags, one lock, dispatch to main.
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(runLoop, source, .commonModes)
+        let runLoopBox = OSAllocatedUnfairLock<CFRunLoop?>(initialState: nil)
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            let runLoop = CFRunLoopGetCurrent()
+            runLoopBox.withLock { $0 = runLoop }
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            ready.signal()
+            CFRunLoopRun()
+        }
+        thread.name = "murmur.hotkey-tap"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        ready.wait() // bounded: the thread signals before entering its loop
         CGEvent.tapEnable(tap: tap, enable: true)
 
         self.tap = tap
-        self.runLoop = runLoop
+        self.runLoop = runLoopBox.withLock { $0 }
         self.runLoopSource = source
         self.retainedSelf = opaqueSelf
         portBox.withLock { $0 = tap }
@@ -141,11 +154,13 @@ final class GlobalHotKeyMonitor: HotKeyMonitoring {
     func stop() {
         if let runLoopSource, let runLoop {
             CFRunLoopRemoveSource(runLoop, runLoopSource, .commonModes)
+            CFRunLoopStop(runLoop) // lets the tap thread exit its CFRunLoopRun
         }
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
         portBox.withLock { $0 = nil }
+        slashDownBox.withLock { $0 = false } // never carry a half-swallowed `/` across restart
         tap = nil
         runLoop = nil
         runLoopSource = nil
@@ -178,20 +193,13 @@ final class GlobalHotKeyMonitor: HotKeyMonitoring {
         let rightShiftDown =
             (event.flags.rawValue & Self.rightShiftDeviceFlag) != 0
 
-        let swallow = tapState.withLock { (state: inout TapThreadState) -> Bool in
-            // Track the hold on the tap thread itself so the verdict for a
-            // `/` arriving right after Right⌘-down is ordered with it (the
-            // main-actor mirror lags by a queue hop).
-            if type == .flagsChanged, keyCode == Self.rightCommandKeyCode {
-                state.holdActive = rightCommandDown
-                return false
-            }
-            if type == .keyDown, keyCode == Self.slashKeyCode, state.holdActive {
-                state.slashDown = true
+        let swallow = slashDownBox.withLock { (slashDown: inout Bool) -> Bool in
+            if type == .keyDown, keyCode == Self.slashKeyCode, rightCommandDown {
+                slashDown = true
                 return true
             }
-            if type == .keyUp, keyCode == Self.slashKeyCode, state.slashDown {
-                state.slashDown = false
+            if type == .keyUp, keyCode == Self.slashKeyCode, slashDown {
+                slashDown = false
                 return true
             }
             return false

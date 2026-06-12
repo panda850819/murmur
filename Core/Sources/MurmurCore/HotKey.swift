@@ -81,12 +81,15 @@ public final class HotKeyBridge: ObservableObject {
         }
         // Prompt for both once here — launch is the right user-initiated
         // moment, not mid-transcription. Both grants only take effect after
-        // an app relaunch (the UI says so).
+        // an app relaunch (the UI says so). A failed `start()` is attributed
+        // to Accessibility: since M3a the tap is ACTIVE (`.defaultTap`, to
+        // swallow the `/` ask chord) and creating one is gated on the
+        // Accessibility grant, not Input Monitoring.
         let imTrusted = probe.inputMonitoringTrusted(prompt: true)
         let axTrusted = probe.accessibilityTrusted(prompt: true)
         let started = monitor.start()
-        inputMonitoringGranted = imTrusted && started
-        accessibilityGranted = axTrusted
+        inputMonitoringGranted = imTrusted
+        accessibilityGranted = axTrusted && started
     }
 
     /// Re-check after the user (says they) granted the permissions. The tap
@@ -96,9 +99,9 @@ public final class HotKeyBridge: ObservableObject {
     public func retry() {
         monitor.stop()
         let started = monitor.start()
-        inputMonitoringGranted =
-            probe.inputMonitoringTrusted(prompt: false) && started
-        accessibilityGranted = probe.accessibilityTrusted(prompt: false)
+        inputMonitoringGranted = probe.inputMonitoringTrusted(prompt: false)
+        accessibilityGranted =
+            probe.accessibilityTrusted(prompt: false) && started
     }
 
     private func enqueue(_ action: @escaping () async -> Void) {

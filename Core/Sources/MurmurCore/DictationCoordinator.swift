@@ -164,10 +164,14 @@ public final class DictationCoordinator: ObservableObject {
                 if let text = output {
                     transcript = text
                     if !paster.paste(text) {
-                        errorMessage = "Couldn't auto-paste. Enable Accessibility for "
+                        let pasteHint = "Couldn't auto-paste. Enable Accessibility for "
                             + "Murmur: System Settings ▸ Privacy & Security ▸ "
                             + "Accessibility. (Transcript is on the clipboard — ⌘V "
                             + "to paste manually.)"
+                        // Keep a mode-degrade note (e.g. "pasted the raw
+                        // transcript") visible alongside the paste hint.
+                        errorMessage = [errorMessage, pasteHint]
+                            .compactMap { $0 }.joined(separator: " ")
                     }
                 } else {
                     // Ask failed — show the question, paste nothing (an answer
