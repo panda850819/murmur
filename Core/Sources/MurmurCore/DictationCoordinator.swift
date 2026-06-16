@@ -108,6 +108,18 @@ public final class DictationCoordinator: ObservableObject {
             await transcriber.transcribe(wavURL: url)
             errorMessage = transcriber.lastError
             if errorMessage == nil, let rawTranscript = transcriber.transcript, !rawTranscript.isEmpty {
+                // Non-speech transcript guard: WhisperKit emits bracketed
+                // markers ("[BLANK_AUDIO]", "(silence)", "[INAUDIBLE]") on
+                // near-silent or non-speech audio. They are not the user's
+                // words — drop them BEFORE spending a Groq call or pasting
+                // noise. Conservative: fires only when the WHOLE transcript is
+                // non-speech, never on real words next to a marker, since
+                // losing real speech is the worse failure.
+                if TranscriptGuard.isNonSpeech(rawTranscript) {
+                    errorMessage = "No speech detected — nothing captured. Try again."
+                    phase = .idle
+                    return
+                }
                 // A': deterministic proper-noun correction. Runs on the raw
                 // transcript BEFORE enhance, then AGAIN on the enhanced output —
                 // Groq's cleanup ("fix capitalization … obvious slips") can
@@ -177,5 +189,38 @@ public final class DictationCoordinator: ObservableObject {
         guard phase == .recording else { return }
         _ = await recorder.stop()
         phase = .idle
+    }
+}
+
+/// Rejects "non-speech" transcripts before they reach enhance or paste.
+/// WhisperKit emits bracketed markers — "[BLANK_AUDIO]", "[ Silence ]",
+/// "(inaudible)" and similar special tokens — on near-silent or non-speech
+/// audio. Those are not the user's words; pasting them, or spending a Groq call
+/// cleaning them up, is pure noise.
+///
+/// CONSERVATIVE BY DESIGN: dropping real speech is the worse failure (the user
+/// silently loses what they said), so the guard fires ONLY when the WHOLE
+/// transcript is non-speech. Char-level scan (mirrors `SanityFilter`): walk the
+/// scalars tracking bracket depth; any letter or digit OUTSIDE every marker span
+/// is real content, so the transcript is kept. "今天 [BLANK_AUDIO] 開會" and
+/// "I said (pause) hello" both keep their words. Free-text hallucinations
+/// ("Thank you.") are deliberately NOT filtered — indistinguishable from real
+/// speech, so gating them would eat dictation.
+enum TranscriptGuard {
+    static func isNonSpeech(_ text: String) -> Bool {
+        var depth = 0
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "[", "(":
+                depth += 1
+            case "]", ")":
+                if depth > 0 { depth -= 1 }
+            default:
+                if depth == 0, CharacterSet.alphanumerics.contains(scalar) {
+                    return false
+                }
+            }
+        }
+        return true
     }
 }

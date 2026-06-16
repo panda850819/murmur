@@ -818,4 +818,114 @@ final class DictationCoordinatorTests: XCTestCase {
         XCTAssertEqual(F.relevant(transcript: "今天 gbrain 開會", glossary: ["gbrain"], isRealWord: real),
                        ["gbrain"], "the name actually said in a CJK utterance ⇒ kept")
     }
+
+    // MARK: Non-speech transcript guard (blank-audio / silence markers)
+
+    @MainActor
+    func testBlankAudioTranscriptIsNotPasted() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("[BLANK_AUDIO]")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(paster.pasted.isEmpty, "a blank-audio artifact must never be pasted")
+        XCTAssertNil(c.transcript)
+        XCTAssertEqual(c.errorMessage, "No speech detected — nothing captured. Try again.")
+        XCTAssertEqual(c.phase, .idle)
+    }
+
+    @MainActor
+    func testSilenceMarkerTranscriptIsNotPasted() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("[ Silence ]")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(paster.pasted.isEmpty, "a silence marker must never be pasted")
+        XCTAssertNotNil(c.errorMessage)
+    }
+
+    @MainActor
+    func testRealTranscriptStillPastes() async {
+        // The recall half: an ordinary transcript must pass the guard untouched.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("ship it tomorrow")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(paster.pasted, ["ship it tomorrow"])
+        XCTAssertNil(c.errorMessage)
+    }
+
+    @MainActor
+    func testRealWordsNextToMarkerStillPaste() async {
+        // Conservatism lock: a marker embedded in real speech must NOT drop the
+        // whole utterance — only the marker is noise, the words are not.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("今天 [BLANK_AUDIO] 開會")),
+            paster: paster
+        )
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(paster.pasted, ["今天 [BLANK_AUDIO] 開會"],
+                       "real words beside a marker must survive the guard")
+    }
+
+    @MainActor
+    func testNonSpeechTranscriptSkipsEnhance() async {
+        // No Groq spend on noise: the enhancer must never run for a blank-audio
+        // transcript (the guard fires before the enhance hop).
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let echo = EchoEnhancer()
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("[BLANK_AUDIO]")),
+            enhancer: echo
+        )
+        await c.toggle()
+        await c.toggle()
+        let seen = await echo.seen
+        XCTAssertTrue(seen.isEmpty, "non-speech transcript must not reach the enhancer")
+    }
+
+    func testTranscriptGuardClassifiesNonSpeech() {
+        typealias G = TranscriptGuard
+        // dropped: pure markers / no real content
+        XCTAssertTrue(G.isNonSpeech("[BLANK_AUDIO]"))
+        XCTAssertTrue(G.isNonSpeech("[BLANK_AUDIO][BLANK_AUDIO]"))
+        XCTAssertTrue(G.isNonSpeech("[ Silence ]"))
+        XCTAssertTrue(G.isNonSpeech("(inaudible)"))
+        XCTAssertTrue(G.isNonSpeech("[INAUDIBLE]"))
+        XCTAssertTrue(G.isNonSpeech("   "))
+        XCTAssertTrue(G.isNonSpeech(""))
+        XCTAssertTrue(G.isNonSpeech("..."))
+        // kept: any real word/digit content
+        XCTAssertFalse(G.isNonSpeech("hello"))
+        XCTAssertFalse(G.isNonSpeech("ship it tomorrow"))
+        XCTAssertFalse(G.isNonSpeech("123"))
+        XCTAssertFalse(G.isNonSpeech("今天開會"))
+        XCTAssertFalse(G.isNonSpeech("今天 [BLANK_AUDIO] 開會"),
+                       "a marker beside real words is not pure non-speech")
+        XCTAssertFalse(G.isNonSpeech("I said (pause) hello"))
+    }
 }
