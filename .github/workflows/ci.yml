@@ -1,12 +1,19 @@
 name: CI
 
 on:
+  # Run on every branch push (not just main) so an unattended loop can push a
+  # feature branch and get CI without opening a PR. pull_request still covers
+  # the human review flow; the concurrency group below collapses the duplicate
+  # push+PR run for a branch that has an open PR.
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # head_ref is the source branch on pull_request, empty on push (→ ref_name).
+  # Keying on it makes a branch's push run and its PR run share one group, so
+  # cancel-in-progress keeps a single run per branch instead of two.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
