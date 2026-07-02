@@ -54,6 +54,18 @@ public final class DictationCoordinator: ObservableObject {
     /// without reference text.
     public var selectionReader: (any SelectionReading)?
 
+    /// Dictation history (M5). Settable so the SwiftUI layer can inject the
+    /// shared store it also renders the History list from (mirrors how
+    /// `corrector` is wired). `nil` → nothing is recorded.
+    public var history: HistoryStore?
+
+    /// Silent-recording gate (M5), run on the stopped WAV BEFORE the
+    /// transcribe pass. A function seam (not a protocol) because the real
+    /// implementation is one pure static func; tests swap in a constant so
+    /// the coordinator's silent-path flow is testable without real audio
+    /// files. Default = the real RMS check.
+    public var silenceCheck: (URL) -> Bool = { SilenceDetector.isSilent(wavURL: $0) }
+
     /// True when an LLM enhancer is wired (i.e. a Groq key was present). The UI
     /// hides the clean-up toggle when this is false.
     public var canEnhance: Bool { enhancer != nil }
@@ -124,6 +136,15 @@ public final class DictationCoordinator: ObservableObject {
                 return
             }
             lastSavedURL = url
+            // M5 silent-audio guard: a muted mic / wrong input device / grazed
+            // hotkey yields a near-zero WAV. Whisper on silence wastes seconds
+            // and then hallucinates or pastes nothing — fail fast with an
+            // actionable retry message instead, before the transcribe pass.
+            if silenceCheck(url) {
+                errorMessage = "Audio was silent — nothing captured. Try again."
+                phase = .idle
+                return
+            }
             phase = .transcribing
             await transcriber.transcribe(wavURL: url)
             errorMessage = transcriber.lastError
@@ -163,7 +184,19 @@ public final class DictationCoordinator: ObservableObject {
                 }
                 if let text = output {
                     transcript = text
-                    if !paster.paste(text) {
+                    let pasted = paster.paste(text)
+                    if pasted {
+                        // M5 history: record what actually landed in the
+                        // document — appended only AFTER the paste reported
+                        // success, so history never claims text the document
+                        // never received. A degraded-but-pasted output
+                        // (translate falling back to the source text) still
+                        // counts: it IS what the user got. Ask-failure
+                        // (output nil), transcribe errors, the silent guard,
+                        // cancel, and a refused paste all miss this branch,
+                        // so failures never pollute the history.
+                        history?.append(mode: mode, text: text)
+                    } else {
                         let pasteHint = "Couldn't auto-paste. Enable Accessibility for "
                             + "Murmur: System Settings ▸ Privacy & Security ▸ "
                             + "Accessibility. (Transcript is on the clipboard — ⌘V "

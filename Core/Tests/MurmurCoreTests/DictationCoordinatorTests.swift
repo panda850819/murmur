@@ -168,7 +168,7 @@ final class DictationCoordinatorTests: XCTestCase {
         chatter: (any LLMChatting)? = nil,
         corrector: (any TextCorrecting)? = nil
     ) -> DictationCoordinator {
-        DictationCoordinator(
+        let c = DictationCoordinator(
             recorder: recorder,
             transcriber: Transcriber(engine: engine),
             paster: paster ?? FakePaster(),
@@ -176,6 +176,12 @@ final class DictationCoordinatorTests: XCTestCase {
             chatter: chatter,
             corrector: corrector
         )
+        // The fake recorder's stop URL points at no real file, which the real
+        // RMS check would (correctly) call silent. Stub it open by default;
+        // the M5 silent-guard tests below override it explicitly, and the
+        // real check is covered by SilenceDetectorTests.
+        c.silenceCheck = { _ in false }
+        return c
     }
 
     @MainActor
@@ -987,6 +993,229 @@ final class DictationCoordinatorTests: XCTestCase {
         let questions = await chatter.questions
         XCTAssertTrue(translations.isEmpty)
         XCTAssertTrue(questions.isEmpty)
+    }
+
+    // MARK: M5 silent-audio guard
+
+    @MainActor
+    func testSilentStopSkipsTranscribeAndPaste() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let paster = FakePaster()
+        let gate = GateEngine()
+        let c = makeCoordinator(recorder: rec, engine: gate, paster: paster)
+        c.silenceCheck = { _ in true }
+        await c.toggle()                       // → recording
+        await c.toggle()                       // stop → silent → idle
+        XCTAssertEqual(c.phase, .idle)
+        XCTAssertEqual(c.errorMessage, "Audio was silent — nothing captured. Try again.")
+        XCTAssertNil(c.transcript)
+        XCTAssertTrue(paster.pasted.isEmpty)
+        let calls = await gate.callCount()
+        XCTAssertEqual(calls, 0, "a silent recording must never reach the transcriber")
+    }
+
+    @MainActor
+    func testSilenceCheckReceivesTheStoppedURL() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("hi")))
+        var checked: [URL] = []
+        c.silenceCheck = { checked.append($0); return false }
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(checked, [wav], "the check must run on the WAV the recorder produced")
+        XCTAssertEqual(c.transcript, "hi", "non-silent ⇒ the normal flow proceeds")
+    }
+
+    @MainActor
+    func testRetryAfterSilentStopStartsFresh() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("take two")))
+        c.silenceCheck = { _ in true }
+        await c.toggle()
+        await c.toggle()                       // silent → idle + error
+        XCTAssertNotNil(c.errorMessage)
+
+        c.silenceCheck = { _ in false }        // user fixes the mic, retries
+        await c.toggle()                       // → recording again, error cleared
+        XCTAssertEqual(c.phase, .recording)
+        XCTAssertNil(c.errorMessage, "the retry must not show the stale silence error")
+        await c.toggle()
+        XCTAssertEqual(c.transcript, "take two")
+    }
+
+    // MARK: M5 history
+
+    @MainActor
+    func testDictateSuccessAppendsHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("hello world")))
+        c.history = history
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(history.records.count, 1)
+        XCTAssertEqual(history.records.first?.mode, "dictate")
+        XCTAssertEqual(history.records.first?.text, "hello world")
+    }
+
+    @MainActor
+    func testDictateHistoryRecordsTheEnhancedOutput() async {
+        // History mirrors what hit the document — the enhanced text, not the
+        // raw Whisper transcript.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("um hello")),
+            enhancer: FixedEnhancer(outcome: .text("Hello."))
+        )
+        c.history = history
+        await c.toggle()
+        await c.toggle()
+        XCTAssertEqual(history.records.first?.text, "Hello.")
+    }
+
+    @MainActor
+    func testTranslateSuccessAppendsHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("原文")),
+            chatter: FakeChatter(.text("translated"))
+        )
+        c.history = history
+        await c.toggle(mode: .translate)
+        await c.toggle(mode: .translate)
+        XCTAssertEqual(history.records.first?.mode, "translate")
+        XCTAssertEqual(history.records.first?.text, "translated")
+    }
+
+    @MainActor
+    func testAskSuccessAppendsHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("what is murmur")),
+            chatter: FakeChatter(.text("the answer"))
+        )
+        c.history = history
+        await c.toggle(mode: .ask)
+        await c.toggle(mode: .ask)
+        XCTAssertEqual(history.records.first?.mode, "ask")
+        XCTAssertEqual(history.records.first?.text, "the answer")
+    }
+
+    @MainActor
+    func testAskFailureDoesNotAppendHistory() async {
+        // Ask-failure pastes nothing, so there is no output to record.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("這段在說什麼")),
+            chatter: FakeChatter(.fail)
+        )
+        c.history = history
+        await c.toggle(mode: .ask)
+        await c.toggle(mode: .ask)
+        XCTAssertTrue(history.records.isEmpty, "no answer pasted ⇒ nothing recorded")
+    }
+
+    @MainActor
+    func testTranscribeFailureDoesNotAppendHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .fail))
+        c.history = history
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(history.records.isEmpty)
+    }
+
+    @MainActor
+    func testEmptyTranscriptDoesNotAppendHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("")))
+        c.history = history
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(history.records.isEmpty, "nothing pasted ⇒ nothing recorded")
+    }
+
+    @MainActor
+    func testCancelDoesNotAppendHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("dropped")))
+        c.history = history
+        await c.toggle()
+        await c.cancel()
+        XCTAssertTrue(history.records.isEmpty)
+    }
+
+    @MainActor
+    func testPasteFailureDoesNotAppendHistory() async {
+        // History records what actually landed in the document. A refused
+        // paste means nothing landed — appending would claim text the
+        // document never received. The Accessibility hint must still show.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let paster = FakePaster()
+        paster.succeeds = false
+        let c = makeCoordinator(
+            recorder: rec,
+            engine: FixedEngine(outcome: .text("hi")),
+            paster: paster
+        )
+        c.history = history
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(history.records.isEmpty, "refused paste ⇒ nothing recorded")
+        XCTAssertTrue(c.errorMessage?.contains("Accessibility") == true,
+                      "the paste-failure hint must survive the restructure")
+    }
+
+    @MainActor
+    func testSilentStopDoesNotAppendHistory() async {
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(recorder: rec, engine: FixedEngine(outcome: .text("never")))
+        c.history = history
+        c.silenceCheck = { _ in true }
+        await c.toggle()
+        await c.toggle()
+        XCTAssertTrue(history.records.isEmpty)
+    }
+
+    @MainActor
+    func testDegradedTranslateStillAppendsWhatWasPasted() async {
+        // Translate failure degrades to pasting the raw transcript — that IS
+        // what landed in the document, so it IS what history records.
+        let rec = FakeRecorder()
+        rec.stopURL = wav
+        let history = HistoryStore(storeURL: nil)
+        let c = makeCoordinator(
+            recorder: rec, engine: FixedEngine(outcome: .text("原文")),
+            chatter: FakeChatter(.fail)
+        )
+        c.history = history
+        await c.toggle(mode: .translate)
+        await c.toggle(mode: .translate)
+        XCTAssertEqual(history.records.first?.text, "原文",
+                       "the degraded-but-pasted output is recorded")
     }
 
     func testRelevantGlossaryCodeMixedRealWordDoesNotLeak() {
