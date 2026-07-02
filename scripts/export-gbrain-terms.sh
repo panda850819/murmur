@@ -11,7 +11,7 @@
 #       export-gbrain-terms.sh "$HOME/Library/Application Support/Murmur/gbrain-terms.json"
 #     murmur reads that file at launch and it overrides the baked snapshot.
 #
-# Output schema: { "version": 1, "terms": ["gbrain", "Yei", ...] }  (Latin tokens)
+# Output schema: { "version": 1, "terms": ["gbrain", "Murmur", ...] }  (Latin tokens)
 #
 # Scope: companies + projects (coined-noun-dense) plus a seed of personal
 # private nouns. People are OPT-IN (MURMUR_TERMS_INCLUDE_PEOPLE=1) — most are
@@ -19,8 +19,9 @@
 # bloat the fuzzy term list with over-correction risk. C grows the list live for
 # anything missed.
 #
-# CI-safe: if `gbrain` is not on PATH (CI, fresh clone), keep the committed
-# terms.json untouched and exit 0 — never ship an empty bake.
+# CI-safe: if `gbrain` is not on PATH (CI, fresh clone), keep the existing
+# generated terms.json. If it does not exist, seed it from the committed sample
+# — never ship an empty bake.
 
 set -euo pipefail
 
@@ -28,15 +29,31 @@ cd "$(dirname "$0")/.."
 
 OUT="${1:-Sources/MurmurMac/Resources/terms.json}"
 INCLUDE_PEOPLE="${MURMUR_TERMS_INCLUDE_PEOPLE:-0}"
+SAMPLE="Sources/MurmurMac/Resources/terms.sample.json"
+
+ensure_fallback_terms() {
+    if [ -f "$OUT" ]; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$OUT")"
+    cp "$SAMPLE" "$OUT"
+    echo "seeded fallback terms from $SAMPLE -> $OUT"
+}
 
 if ! command -v gbrain >/dev/null 2>&1; then
     echo "gbrain not found; keeping existing $OUT (CI / no-brain environment)"
+    ensure_fallback_terms
     exit 0
 fi
 
-# Personal private nouns that Whisper mis-hears. Some are entity pages already,
-# some (Bob) live under people/; seed them directly so they're always present.
-SEED="gbrain Yei Sommet Bob Murmur Abyss Hermes Pandastack"
+# Base seed nouns that Whisper mis-hears. Private additions (entity/people
+# names) live in scripts/seed-terms.local (gitignored, whitespace-separated)
+# so they never sit in this committed file.
+SEED="gbrain Murmur"
+SEED_LOCAL="scripts/seed-terms.local"
+if [ -f "$SEED_LOCAL" ]; then
+    SEED="$SEED $(tr '\n' ' ' < "$SEED_LOCAL")"
+fi
 
 types="company project"
 [ "$INCLUDE_PEOPLE" = "1" ] && types="$types person"
@@ -60,6 +77,7 @@ done | sed -E 's/\([^)]*\)//g; s/（[^）]*）//g' | grep -oE '[A-Za-z][A-Za-z]+
 
 if [ ! -s "$gbrain_raw" ]; then
     echo "gbrain returned no terms (DB down / empty result?); keeping existing $OUT"
+    ensure_fallback_terms
     exit 0
 fi
 

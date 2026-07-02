@@ -25,6 +25,11 @@ DerivedData/
 build/
 out/
 
+## Private generated dictionary
+Sources/MurmurMac/Resources/terms.json
+!Sources/MurmurMac/Resources/terms.sample.json
+scripts/seed-terms.local
+
 ## gbrain MCP write_through artifacts (server writes brain pages cwd-relative;
 ## the canonical brain lives elsewhere). Root-anchored so docs/sessions/ stays tracked.
 /projects/
