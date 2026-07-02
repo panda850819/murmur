@@ -185,8 +185,8 @@ Typeless macOS hotkey map: 口述 = Right Cmd · 翻譯 = Right Shift+Right Cmd 
 |---|---|---|
 | macOS signed DMG | 🔲 | |
 | iOS TestFlight internal | 🔲 | gates the hard-kill criterion |
-| 🔴 **Privacy gate: terms.json at-rest** | 🔲 | gitignore + build-time bake (or runtime-only B file) so Panda's entity graph isn't baked into the bundle + git history |
-| 🔴 **Privacy gate: B' glossary over-the-wire** | 🔲 | utterance-relevance filter so cloud enhance ships only terms fuzzy-near the transcript, not the full roster (see Locked decision §3) |
+| 🔴 **Privacy gate: terms.json at-rest** | ⏳ | true `terms.json` is generated + gitignored; committed source is `terms.sample.json`. Past git history still contains the old snapshot, so external distribution still needs a history/publish decision. |
+| 🔴 **Privacy gate: B' glossary over-the-wire** | ✅ | `GlossaryRelevanceFilter` ships only utterance-relevant terms; covered by coordinator tests (see Locked decision §3). |
 
 `▱▱▱▱▱` 0%
 
