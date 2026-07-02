@@ -11,7 +11,9 @@ import IOKit.hid
 @MainActor
 public protocol HotKeyMonitoring: AnyObject {
     var onPress: (() -> Void)? { get set }
-    var onRelease: ((_ cancelled: Bool) -> Void)? { get set }
+    /// `mode` is the chord resolved over the whole hold (Right⇧ seen → 翻譯,
+    /// `/` seen → 詢問); only meaningful when `cancelled` is false.
+    var onRelease: ((_ cancelled: Bool, _ mode: DictationMode) -> Void)? { get set }
     @discardableResult
     func start() -> Bool
     func stop()
@@ -68,23 +70,26 @@ public final class HotKeyBridge: ObservableObject {
         monitor.onPress = { [weak self] in
             self?.enqueue { await dictation.toggle() }
         }
-        monitor.onRelease = { [weak self] cancelled in
+        monitor.onRelease = { [weak self] cancelled, mode in
             self?.enqueue {
                 if cancelled {
                     await dictation.cancel()
                 } else {
-                    await dictation.toggle()
+                    await dictation.toggle(mode: mode)
                 }
             }
         }
         // Prompt for both once here — launch is the right user-initiated
         // moment, not mid-transcription. Both grants only take effect after
-        // an app relaunch (the UI says so).
+        // an app relaunch (the UI says so). A failed `start()` is attributed
+        // to Accessibility: since M3a the tap is ACTIVE (`.defaultTap`, to
+        // swallow the `/` ask chord) and creating one is gated on the
+        // Accessibility grant, not Input Monitoring.
         let imTrusted = probe.inputMonitoringTrusted(prompt: true)
         let axTrusted = probe.accessibilityTrusted(prompt: true)
         let started = monitor.start()
-        inputMonitoringGranted = imTrusted && started
-        accessibilityGranted = axTrusted
+        inputMonitoringGranted = imTrusted
+        accessibilityGranted = axTrusted && started
     }
 
     /// Re-check after the user (says they) granted the permissions. The tap
@@ -94,9 +99,9 @@ public final class HotKeyBridge: ObservableObject {
     public func retry() {
         monitor.stop()
         let started = monitor.start()
-        inputMonitoringGranted =
-            probe.inputMonitoringTrusted(prompt: false) && started
-        accessibilityGranted = probe.accessibilityTrusted(prompt: false)
+        inputMonitoringGranted = probe.inputMonitoringTrusted(prompt: false)
+        accessibilityGranted =
+            probe.accessibilityTrusted(prompt: false) && started
     }
 
     private func enqueue(_ action: @escaping () async -> Void) {

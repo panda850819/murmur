@@ -39,11 +39,24 @@ struct ContentView: View {
     /// correction the coordinator applies, AND the one-tap capture form below.
     /// One instance, injected into the coordinator in `.onAppear`.
     @StateObject private var corrections = CorrectionStore.makeDefault()
+    /// Local dictation history + derived stats (M5). One instance: the
+    /// coordinator appends to it, the History section below renders it.
+    @StateObject private var history = HistoryStore.makeDefault()
 
     /// One-tap correction form state (C).
     @State private var showCorrection = false
+    /// History section disclosure state (M5). Collapsed by default — the
+    /// dictation controls stay the visual focus.
+    @State private var showHistory = false
     @State private var heardText = ""
     @State private var intendedText = ""
+
+    /// 翻譯 mode's output language. Persisted here (UI concern) and pushed
+    /// into the coordinator, which is AppKit/SwiftUI-free.
+    @AppStorage("targetLanguage") private var targetLanguage = "English (US)"
+    private static let targetLanguages = [
+        "English (US)", "繁體中文", "日本語", "한국어", "Español", "Français", "Deutsch",
+    ]
 
     var body: some View {
         VStack(spacing: 16) {
@@ -64,15 +77,32 @@ struct ContentView: View {
             .keyboardShortcut(.return, modifiers: [])
             .disabled(dictation.phase == .transcribing)
 
-            Text("Hold Right ⌘ anywhere to dictate")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            VStack(spacing: 2) {
+                Text("Hold Right ⌘ anywhere to dictate")
+                if dictation.canChat {
+                    Text("+ Right ⇧ to translate · tap / while holding to ask")
+                }
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
 
             if dictation.canEnhance {
                 Toggle("Clean up with AI", isOn: $dictation.enhanceEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .fixedSize()
+            }
+
+            if dictation.canChat {
+                Picker("Translate to", selection: $targetLanguage) {
+                    ForEach(Self.targetLanguages, id: \.self) { Text($0) }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .fixedSize()
+                .onChange(of: targetLanguage) { _, newValue in
+                    dictation.targetLanguage = newValue
+                }
             }
 
             if !hotkey.allPermissionsGranted {
@@ -139,13 +169,80 @@ struct ContentView: View {
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
             }
+
+            historySection
         }
         .padding(40)
         .frame(minWidth: 360, minHeight: 240)
         .onAppear {
             hotkey.attach(to: dictation)
             dictation.corrector = corrections
+            dictation.selectionReader = AXSelectionReader()
+            dictation.history = history
+            dictation.targetLanguage = targetLanguage
         }
+    }
+
+    /// Collapsible dictation history (M5): the last 20 records as
+    /// date · mode tag · first line, a Clear button, and a one-line stats
+    /// footnote. 20 keeps the window compact; the store still holds 200.
+    @ViewBuilder
+    private var historySection: some View {
+        VStack(spacing: 6) {
+            DisclosureGroup(isExpanded: $showHistory) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if history.records.isEmpty {
+                        Text("No dictations yet")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(history.records.prefix(20)) { record in
+                            HStack(spacing: 6) {
+                                Text(record.date, format: .dateTime.month().day().hour().minute())
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                Text(record.mode)
+                                    .font(.caption2)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(.quaternary, in: Capsule())
+                                Text(firstLine(of: record.text))
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                        }
+                        Button("Clear") { history.clear() }
+                            .controlSize(.small)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
+            } label: {
+                Text("History")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            // M5 stats: derived live from the same records the list shows,
+            // so the numbers can never disagree with the visible history.
+            // "(last 200)" because the store caps at `HistoryStore.capacity`
+            // — these are rolling-window numbers, not lifetime totals, and
+            // the copy must not promise more than the data covers.
+            let stats = history.stats
+            Text("\(stats.dictations) dictations · \(stats.words) words · "
+                + "~\(String(format: "%.0f", stats.estMinutesSaved)) min saved (last 200)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: 320)
+    }
+
+    /// First line only — a multi-paragraph dictation must not blow up a
+    /// single history row.
+    private func firstLine(of text: String) -> String {
+        text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+            .first.map(String.init) ?? text
     }
 
     /// Mirrors `CorrectionStore.captureCorrection`'s accept rule (same trim

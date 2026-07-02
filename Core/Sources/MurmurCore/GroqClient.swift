@@ -16,6 +16,19 @@ public protocol LLMEnhancing: Sendable {
     func enhance(_ text: String, glossary: [String]) async throws -> String
 }
 
+/// The other two M3a behaviors riding the same chat primitive. Split from
+/// `LLMEnhancing` so tests can fake translate/ask without faking enhance and
+/// the coordinator can express "Groq key present" once for both.
+public protocol LLMChatting: Sendable {
+    /// Translate dictated speech into `targetLanguage`. `glossary` carries the
+    /// utterance-relevant proper nouns (same B' filter as enhance) so names
+    /// survive the language hop. Throws on transport/decode failure.
+    func translate(_ text: String, to targetLanguage: String, glossary: [String]) async throws -> String
+    /// Answer a spoken question, optionally about `selection` (the text
+    /// selected in the frontmost app). Throws on transport/decode failure.
+    func answer(_ question: String, about selection: String?) async throws -> String
+}
+
 /// Groq connection settings. Key is resolved from `GROQ_API_KEY` for dogfood;
 /// nil when unset so the app degrades to pure on-device, no cloud hop.
 public struct GroqConfig: Sendable {
@@ -127,6 +140,69 @@ public actor GroqClient {
         try await chat(system: Self.cleanupSystemPrompt(glossary: glossary), user: text)
     }
 
+    /// System prompt for 翻譯 mode. The target language is interpolated, so it
+    /// goes through the same sanitizer as glossary entries — it normally comes
+    /// from murmur's own Picker, but the defense is cheap and keeps the prompt
+    /// single-line no matter what a future settings surface feeds in.
+    static func translateSystemPrompt(targetLanguage: String, glossary: [String]) -> String {
+        let language = sanitizeGlossaryEntry(targetLanguage)
+        var prompt = """
+        You translate dictated speech. Translate the user's text into \
+        \(language.isEmpty ? "English" : language). Remove filler words (um, uh, \
+        like). Preserve the original meaning and tone. Keep proper nouns, brand, \
+        product, and project names in their original spelling. Output only the \
+        translation, with no preamble, quotes, or commentary.
+        """
+        let names = glossary
+            .map(sanitizeGlossaryEntry)
+            .filter { !$0.isEmpty }
+        if !names.isEmpty {
+            prompt += "\n\n" + """
+            Known proper nouns (keep these exact spellings; do NOT pull unrelated \
+            words toward this list): \(names.joined(separator: ", ")).
+            """
+        }
+        return prompt
+    }
+
+    /// System prompt for 詢問 mode. The selection rides in the user message
+    /// (`askUserMessage`), not here — it is data, not instruction.
+    static let askSystemPrompt = """
+    You answer a spoken question, transcribed from dictation. If reference text \
+    is provided, base your answer on it. Answer in the same language the \
+    question was asked in. Be direct and concise. Output only the answer, with \
+    no preamble, quotes, or commentary.
+    """
+
+    /// Cap on how much selected text rides along with an ask question. Bounds
+    /// the cloud disclosure and the prompt size; selections are typically a
+    /// sentence or a paragraph, 8k chars is generous.
+    static let askSelectionLimit = 8_000
+
+    static func askUserMessage(question: String, selection: String?) -> String {
+        guard let selection, !selection.isEmpty else { return question }
+        return """
+        Reference text:
+        \(String(selection.prefix(askSelectionLimit)))
+
+        Question: \(question)
+        """
+    }
+
+    public func translate(_ text: String, to targetLanguage: String, glossary: [String]) async throws -> String {
+        try await chat(
+            system: Self.translateSystemPrompt(targetLanguage: targetLanguage, glossary: glossary),
+            user: text
+        )
+    }
+
+    public func answer(_ question: String, about selection: String?) async throws -> String {
+        try await chat(
+            system: Self.askSystemPrompt,
+            user: Self.askUserMessage(question: question, selection: selection)
+        )
+    }
+
     /// One-shot chat completion. The shared primitive translate/edit reuse.
     public func chat(system: String, user: String) async throws -> String {
         var request = URLRequest(url: config.baseURL.appendingPathComponent("chat/completions"))
@@ -165,6 +241,7 @@ public actor GroqClient {
 }
 
 extension GroqClient: LLMEnhancing {}
+extension GroqClient: LLMChatting {}
 extension GroqClient: Transcribing {}
 
 // MARK: - Pure helpers (network-free, unit-testable)
