@@ -29,3 +29,4 @@ out/
 ## the canonical brain lives elsewhere). Root-anchored so docs/sessions/ stays tracked.
 /projects/
 /sessions/
+scripts/seed-terms.local
